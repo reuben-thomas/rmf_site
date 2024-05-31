@@ -29,6 +29,10 @@ use bevy::{
 mod cursor;
 use cursor::{update_cursor_command, CursorCommand};
 
+mod keyboard;
+use keyboard::{update_keyboard_command, KeyboardCommand};
+use tracing_subscriber::filter::targets;
+
 /// RenderLayers are used to inform cameras which entities they should render.
 /// The General render layer is for things that should be visible to all
 /// cameras.
@@ -379,6 +383,7 @@ impl FromWorld for CameraControls {
 
 fn camera_controls(
     cursor_command: ResMut<CursorCommand>,
+    keyboard_command: ResMut<KeyboardCommand>,
     mut controls: ResMut<CameraControls>,
     mut cameras: Query<(&mut Projection, &mut Transform)>,
     mut bevy_cameras: Query<&mut Camera>,
@@ -405,18 +410,45 @@ fn camera_controls(
         return;
     }
 
+    // Negotiate between input types
+    let mut translation_delta = Vec3::ZERO;
+    let mut rotation_delta = Quat::IDENTITY;
+    let mut fov_delta = 0.0;
+    let mut scale_delta = 0.0;
+
+    if cursor_command.command_type != CameraCommandType::Inactive {
+        translation_delta += cursor_command.translation_delta;
+        rotation_delta *= cursor_command.rotation_delta;
+        fov_delta += cursor_command.fov_delta;
+        scale_delta += cursor_command.scale_delta;
+    } 
+    if keyboard_command.command_type != cursor_command.command_type {
+        translation_delta += keyboard_command.translation_delta;
+        rotation_delta *= keyboard_command.rotation_delta;
+        fov_delta += keyboard_command.fov_delta;
+        scale_delta += keyboard_command.scale_delta;
+    }
+
     if controls.mode() == ProjectionMode::Perspective {
         let (mut persp_proj, mut persp_transform) = cameras
             .get_mut(controls.perspective_camera_entities[0])
             .unwrap();
         if let Projection::Perspective(persp_proj) = persp_proj.as_mut() {
-            persp_transform.translation += cursor_command.translation_delta;
-            persp_transform.rotation *= cursor_command.rotation_delta;
-            persp_proj.fov += cursor_command.fov_delta;
+            persp_transform.translation += translation_delta;
+            persp_transform.rotation *= rotation_delta;
+            persp_proj.fov += fov_delta;
 
             // Ensure upright
             let forward = persp_transform.forward();
             persp_transform.look_to(forward, Vec3::Z);
+
+            // // This allows us to orbit around a target point
+            // controls.orbit_center += cursor_command.translation_delta;
+            // controls.orbit_radius = (controls.orbit_center - persp_transform.translation).length();
+
+            // let rot_matrix = Mat3::from_quat(persp_transform.rotation);
+            // persp_transform.translation = controls.orbit_center
+            //     + rot_matrix.mul_vec3(Vec3::new(0.0, 0.0, controls.orbit_radius));
         }
 
         let proj = persp_proj.clone();
@@ -433,9 +465,9 @@ fn camera_controls(
             .get_mut(controls.orthographic_camera_entities[0])
             .unwrap();
         if let Projection::Orthographic(ortho_proj) = ortho_proj.as_mut() {
-            ortho_transform.translation += cursor_command.translation_delta;
-            ortho_transform.rotation *= cursor_command.rotation_delta;
-            ortho_proj.scale += cursor_command.scale_delta;
+            ortho_transform.translation += translation_delta;
+            ortho_transform.rotation *= rotation_delta;
+            ortho_proj.scale += scale_delta;
         }
 
         let proj = ortho_proj.clone();
@@ -446,6 +478,8 @@ fn camera_controls(
             *child_proj = proj.clone();
         }
     }
+
+
 }
 
 pub struct CameraControlsPlugin;
@@ -454,9 +488,14 @@ impl Plugin for CameraControlsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraControls>()
             .init_resource::<CursorCommand>()
+            .init_resource::<KeyboardCommand>()
             .init_resource::<HeadlightToggle>()
             .add_event::<ChangeProjectionMode>()
-            .add_systems(Update, update_cursor_command)
-            .add_systems(Update, camera_controls);
+            .add_systems(Update, 
+                (update_cursor_command,
+                update_keyboard_command,
+                camera_controls
+                ).chain()
+            );
     }
 }
