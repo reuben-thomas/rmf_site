@@ -31,7 +31,6 @@ use cursor::{update_cursor_command, CursorCommand};
 
 mod keyboard;
 use keyboard::{update_keyboard_command, KeyboardCommand};
-use tracing_subscriber::filter::targets;
 
 /// RenderLayers are used to inform cameras which entities they should render.
 /// The General render layer is for things that should be visible to all

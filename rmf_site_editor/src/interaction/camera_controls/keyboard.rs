@@ -88,6 +88,7 @@ pub fn update_keyboard_command(
         let response_factor = 0.1;
 
         let current_keyboard_motion = keyboard_command.keyboard_motion;
+        let ,
         let mut keyboard_motion = current_keyboard_motion + (target_keyboard_motion - current_keyboard_motion) * response_factor;
         if keyboard_motion.length() > 1.0 {
             keyboard_motion = keyboard_motion.normalize();
@@ -97,7 +98,7 @@ pub fn update_keyboard_command(
 
         let current_zoom_motion = keyboard_command.zoom_motion;
         let mut zoom_motion = current_zoom_motion + 
-            (target_zoom_motion - current_zoom_motion) * response_factor;
+            (target_zoom_motion - current_zoom_motion).signum() * response_factor;
         if zoom_motion.abs() > 1.0 {
             zoom_motion = zoom_motion.signum();
         } else if zoom_motion.abs() < 0.1 {
@@ -111,14 +112,15 @@ pub fn update_keyboard_command(
         } else if keyboard_motion.length() > 0.0 {
             CameraCommandType::Pan
         } else if is_shifting && zoom_motion != 0.0 {
-            CameraCommandType::TranslationZoom
-        } else if zoom_motion != 0.0 {
             CameraCommandType::FovZoom
+        } else if zoom_motion != 0.0 {
+            CameraCommandType::TranslationZoom
         } else {
             CameraCommandType::Inactive
         };
 
-        if command_type != keyboard_command.command_type {} {
+        if command_type != keyboard_command.command_type 
+            && command_type != CameraCommandType::Inactive {} {
             zoom_motion = response_factor * target_zoom_motion;
             keyboard_motion = response_factor * target_keyboard_motion;
         }
@@ -162,9 +164,9 @@ fn update_orthographic_command(
     keyboard_motion: Vec2,
     zoom_motion: f32,
 ) -> KeyboardCommand {    
-    let zoom_sensitivity = 0.1;
-    let orbit_sensitivity = 0.1;
-    let pan_sensitivity = 0.1;
+    let zoom_sensitivity = 0.05;
+    let orbit_sensitivity = 2.0;
+    let pan_sensitivity = 2.0;
     let mut keyboard_command = KeyboardCommand::default();
 
     // Zoom by scaling
@@ -208,17 +210,21 @@ fn update_perspective_command(
     zoom_motion: f32,
     window: &Window,
 ) -> KeyboardCommand {
-    let zoom_sensitivity = 0.1;
-    let orbit_sensitivity = 0.1;
-    let pan_sensitivity = 0.1;
+    let fov_zoom_sensitivity = 0.1;
+    let orbit_sensitivity = 20.0;
+    let pan_sensitivity = 1.0;
+    let translation_zoom_sensitivity = pan_sensitivity;
     let mut keyboard_command = KeyboardCommand::default();
 
-    let zoom_translation = camera_transform.forward() * zoom_motion;
+    let zoom_translation = camera_transform.forward() * zoom_motion * translation_zoom_sensitivity;
 
     match command_type {
         CameraCommandType::FovZoom => {
-            let fov_delta = zoom_motion * 0.1;
-            keyboard_command.fov_delta = fov_delta;
+            if let Projection::Perspective(camera_proj) = camera_proj {
+                let target_fov = (camera_proj.fov + zoom_motion * fov_zoom_sensitivity)
+                    .clamp(std::f32::consts::PI * 10.0 / 180.0, std::f32::consts::PI * 170.0 / 180.0);
+                keyboard_command.fov_delta = target_fov - camera_proj.fov;
+            }
         },
         CameraCommandType::TranslationZoom => {
             keyboard_command.translation_delta = zoom_translation;
@@ -226,7 +232,7 @@ fn update_perspective_command(
         CameraCommandType::Pan => {
             let keyboard_motion_adj = keyboard_motion * pan_sensitivity;
             let right_translation = camera_transform.rotation * Vec3::X;
-            let up_translation = camera_transform.rotation * Vec3::Y;
+            let up_translation = -camera_transform.rotation * Vec3::Y;
             keyboard_command.translation_delta = up_translation * keyboard_motion_adj.y
                 + right_translation * keyboard_motion_adj.x;
         }
@@ -236,7 +242,7 @@ fn update_perspective_command(
             let delta_x = keyboard_motion_adj.x / window_size.x * std::f32::consts::PI * 2.0;
             let delta_y = keyboard_motion_adj.y / window_size.y * std::f32::consts::PI;
             let yaw = Quat::from_rotation_z(-delta_x);
-            let pitch = Quat::from_rotation_x(-delta_y);
+            let pitch = Quat::from_rotation_x(delta_y);
 
             let mut target_rotation = (yaw * camera_transform.rotation) * pitch;
             target_rotation = if Transform::from_rotation(target_rotation).up().dot(Vec3::Z) > 0.0 {
