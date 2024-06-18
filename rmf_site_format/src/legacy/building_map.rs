@@ -7,12 +7,17 @@ use crate::{
     Fiducial as SiteFiducial, FiducialGroup, FiducialMarker, Guided, Lane as SiteLane, LaneMarker,
     Level as SiteLevel, LevelElevation, LevelProperties as SiteLevelProperties, Motion, NameInSite,
     NameOfSite, NavGraph, Navigation, OrientationConstraint, PixelsPerMeter, Pose,
-    PreferredSemiTransparency, RankingsInLevel, ReverseLane, Rotation, Site, SiteProperties,
-    Texture as SiteTexture, TextureGroup, DEFAULT_NAV_GRAPH_COLORS,
+    PreferredSemiTransparency, RankingsInLevel, ReverseLane, Rotation, Scenario,
+    ScenarioProperties, Site, SiteProperties, Texture as SiteTexture, TextureGroup,
+    DEFAULT_NAV_GRAPH_COLORS,
 };
+use crate::{model_instance, scenario};
+use bevy::prelude::default;
 use glam::{DAffine2, DMat3, DQuat, DVec2, DVec3, EulerRot};
+use ron::de;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::hash::Hash;
 use std::path::Path;
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -152,11 +157,26 @@ impl BuildingMap {
         let mut floor_texture_map: HashMap<FloorParameters, u32> = HashMap::new();
         let mut wall_texture_map: HashMap<WallProperties, u32> = HashMap::new();
         let mut lift_cabin_anchors: BTreeMap<String, Vec<(u32, Anchor)>> = BTreeMap::new();
-
         let mut building_id_to_nav_graph_id = HashMap::new();
 
         let mut fiducial_groups: BTreeMap<u32, FiducialGroup> = BTreeMap::new();
         let mut cartesian_fiducials: HashMap<u32, Vec<DVec2>> = HashMap::new();
+
+        let mut model_descriptions = BTreeMap::new();
+        let mut model_description_name_map: HashMap<String, u32> = HashMap::new();
+        let mut model_descripton_count_map: HashMap<String, u32> = HashMap::new();
+        let mut scenarios = BTreeMap::new();
+        let default_scenario_id = site_id.next().unwrap();
+        scenarios.insert(
+            default_scenario_id,
+            Scenario {
+                properties: ScenarioProperties {
+                    name: "Default".to_string(),
+                },
+                model_instances: Default::default(),
+            },
+        );
+
         for (level_name, level) in &self.levels {
             let level_id = site_id.next().unwrap();
             let mut vertex_to_anchor_id: HashMap<usize, u32> = Default::default();
@@ -471,6 +491,30 @@ impl BuildingMap {
                 models.insert(site_id.next().unwrap(), model.to_site());
             }
 
+            for model_sdf in &level.models {
+                let model_description_id = model_description_name_map
+                    .entry(model_sdf.model_name.clone())
+                    .or_insert(site_id.next().unwrap());
+                model_descriptions.insert(*model_description_id, model_sdf.to_description());
+
+                let model_description_count = model_descripton_count_map
+                    .entry(model_sdf.model_name.clone())
+                    .and_modify(|i| *i += 1)
+                    .or_insert(1);
+                scenarios
+                    .get_mut(&default_scenario_id)
+                    .unwrap()
+                    .model_instances
+                    .insert(
+                        site_id.next().unwrap(),
+                        model_sdf.to_instance(
+                            level_id,
+                            *model_description_id,
+                            model_description_count,
+                        ),
+                    );
+            }
+
             let mut physical_cameras = BTreeMap::new();
             for cam in &level.physical_cameras {
                 physical_cameras.insert(site_id.next().unwrap(), cam.to_site());
@@ -672,6 +716,8 @@ impl BuildingMap {
                 },
             },
             agents: Default::default(),
+            model_descriptions,
+            scenarios,
         })
     }
 }

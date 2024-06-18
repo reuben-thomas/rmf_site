@@ -328,6 +328,57 @@ fn generate_site_entities(
             .for_site(site_id)?,
     );
 
+    for (model_description_id, model_description) in &site_data.model_descriptions {
+        let model_description_entity = commands
+            .spawn(model_description.clone())
+            .insert(SiteID(*model_description_id))
+            .set_parent(site_id)
+            .insert(ModelDescriptionMarker)
+            .id();
+        id_to_entity.insert(*model_description_id, model_description_entity);
+        consider_id(*model_description_id);
+    }
+
+    for (scenario_id, scenario) in &site_data.scenarios {
+        let scenario_entity = commands
+            .spawn(scenario.properties.clone())
+            .insert(SiteID(*scenario_id))
+            .set_parent(site_id)
+            .id();
+        id_to_entity.insert(*scenario_id, scenario_entity);
+        consider_id(*scenario_id);
+
+        for (model_instance_id, model_instance) in &scenario.model_instances {
+            let Some(model_description_entity) =
+                id_to_entity.get(&model_instance.model_description).cloned()
+            else {
+                error! {
+                    "Failed to load model description for model instance {model_instance_id:?} in scenario {scenario_id:?}"
+                };
+                continue;
+            };
+
+            let Some(model_instance_parent_entity) =
+                id_to_entity.get(&model_instance.parent).cloned()
+            else {
+                let parent_id = model_instance.parent;
+                error! {
+                    "Failed to load parent {parent_id:?} for model instance {model_instance_id:?} in scenario {scenario_id:?}"
+                }
+                continue;
+            };
+
+            let model_instance_entity = commands
+                .spawn(model_instance.bundle.clone())
+                .insert(SiteID(*model_instance_id))
+                .insert(ModelInstanceMarker)
+                .id();
+            id_to_entity.insert(*model_instance_id, model_instance_entity);
+            consider_id(*model_instance_id);
+            commands.entity(model_instance_parent_entity).add_child(model_instance_entity);
+        }
+    }
+
     let nav_graph_rankings = match RecencyRanking::<NavGraphMarker>::from_u32(
         &site_data.navigation.guided.ranking,
         &id_to_entity,

@@ -27,7 +27,7 @@ use sdformat_rs::{SdfGeometry, SdfPose, Vector3d};
 
 use crate::site::{CollisionMeshMarker, VisualMeshMarker};
 use rmf_site_format::{
-    Angle, AssetSource, Category, IsStatic, Model, ModelMarker, NameInSite, Pose, PrimitiveShape,
+    Angle, AssetSource, Category, IsStatic, Model, ModelMarker, ModelDescription, ModelInstance, NameInSite, Pose, PrimitiveShape,
     Rotation, Scale,
 };
 
@@ -250,6 +250,7 @@ async fn load_model<'a, 'b>(
             if let Some(model) = root.model {
                 let mut world = World::default();
                 let e = world.spawn(SpatialBundle::INHERITED_IDENTITY).id();
+
                 // TODO(luca) hierarchies and joints, rather than flat link importing
                 // All Open-RMF assets have no hierarchy, for now.
                 for link in &model.link {

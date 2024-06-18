@@ -117,9 +117,6 @@ pub struct Site {
     pub anchors: BTreeMap<u32, Anchor>,
     /// Properties that are tied to the whole site
     pub properties: SiteProperties<u32>,
-    /// Properties of each level
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub levels: BTreeMap<u32, Level>,
     /// The groups of textures being used in the site
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub textures: BTreeMap<u32, TextureGroup>,
@@ -132,12 +129,25 @@ pub struct Site {
     /// Properties of each lift
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub lifts: BTreeMap<u32, Lift<u32>>,
+    /// Properties of each level
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub levels: BTreeMap<u32, Level>,
     /// Data related to navigation
     #[serde(default, skip_serializing_if = "Navigation::is_empty")]
     pub navigation: Navigation,
+
+    /// TO BE DEPRECATED
     /// Properties that describe simulated agents in the site
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub agents: BTreeMap<u32, Agent>,
+
+    /// REPLACED BY
+    /// Model types that exist within this workspace
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub model_descriptions: BTreeMap<u32, ModelDescription>,
+    /// Scenarios that contain instances of the above models
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub scenarios: BTreeMap<u32, Scenario>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

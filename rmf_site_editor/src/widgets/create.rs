@@ -18,7 +18,7 @@
 use crate::{
     inspector::{InspectAssetSource, InspectScale},
     interaction::{ChangeMode, SelectAnchor, SelectAnchor3D},
-    site::{DefaultFile, DrawingBundle, Recall},
+    site::{DefaultFile, DrawingBundle, Recall, NameInSite, SiteID, ModelDescriptionMarker},
     AppEvents, AppState,
 };
 use bevy::{ecs::system::SystemParam, prelude::*};
@@ -29,6 +29,8 @@ use rmf_site_format::{DrawingProperties, Geometry, Model, WorkcellModel};
 #[derive(SystemParam)]
 pub struct CreateParams<'w, 's> {
     pub default_file: Query<'w, 's, &'static DefaultFile>,
+    children: Query<'w, 's, &'static Children>,
+    model_description: Query<'w, 's, (&'static NameInSite, Option<&'static SiteID>), With<ModelDescriptionMarker>>,
 }
 
 pub struct CreateWidget<'a, 'w1, 'w2, 's1, 's2> {
@@ -48,6 +50,8 @@ impl<'a, 'w1, 'w2, 's1, 's2> CreateWidget<'a, 'w1, 'w2, 's1, 's2> {
                     return;
                 }
                 AppState::SiteEditor => {
+                    
+
                     if ui.button("Lane").clicked() {
                         self.events.request.change_mode.send(ChangeMode::To(
                             SelectAnchor::create_new_edge_sequence().for_lane().into(),

@@ -61,13 +61,13 @@ pub struct Level {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub lights: BTreeMap<u32, Light>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub models: BTreeMap<u32, Model>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub physical_cameras: BTreeMap<u32, PhysicalCamera>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub walls: BTreeMap<u32, Wall<u32>>,
     #[serde(default, skip_serializing_if = "RankingsInLevel::is_empty")]
     pub rankings: RankingsInLevel,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub models: BTreeMap<u32, Model>,
 }
 
 impl Level {

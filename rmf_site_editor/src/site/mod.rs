@@ -194,6 +194,7 @@ impl Plugin for SitePlugin {
         .register_type::<IsStatic>()
         .register_type::<Scale>()
         .register_type::<ModelMarker>()
+        .register_type::<ModelDescriptionMarker>()
         .register_type::<VisualMeshMarker>()
         .register_type::<CollisionMeshMarker>()
         .register_type::<Category>()
