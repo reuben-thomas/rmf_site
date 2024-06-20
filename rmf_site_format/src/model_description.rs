@@ -28,11 +28,14 @@ pub struct ModelDescriptionMarker;
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "bevy", derive(Bundle))]
 pub struct ModelDescription {
-    /// Name of the model instance
+    /// Name of the model
     pub name: NameInSite,
     /// Where the model should be loaded from
     pub source: AssetSource,
+    /// The motion properties of this model
+    pub kinematics: Kinematics,
     /// Whether this model should be able to move in simulation
+    #[serde(default, skip_serializing_if = "is_default")]
     pub is_static: IsStatic,
     /// Scale to be applied to the model
     #[serde(default, skip_serializing_if = "is_default")]
@@ -40,6 +43,8 @@ pub struct ModelDescription {
     /// Only relevant for bevy
     #[serde(skip)]
     pub marker: ModelDescriptionMarker,
+    #[serde(skip)]
+    pub group: Group,
 }
 
 impl Default for ModelDescription {
@@ -48,8 +53,38 @@ impl Default for ModelDescription {
             name: NameInSite("<Unnamed>".to_string()),
             source: AssetSource::default(),
             is_static: IsStatic(false),
+            kinematics: Kinematics::Static,
             scale: Scale::default(),
             marker: ModelDescriptionMarker,
+            group: Group,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+#[cfg_attr(feature = "bevy", derive(Component, Reflect))]
+#[cfg_attr(feature = "bevy", reflect(Component))]
+pub enum Kinematics {
+    #[default]
+    Static,
+    DifferentialDrive(DifferentialDrive),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "bevy", derive(Component, Reflect))]
+#[cfg_attr(feature = "bevy", reflect(Component))]
+pub struct DifferentialDrive {
+    pub translational_speed: f32,
+    pub rotational_speed: f32,
+    pub bidirectional: bool,
+}
+
+impl Default for DifferentialDrive {
+    fn default() -> Self {
+        Self {
+            translational_speed: 1.0,
+            rotational_speed: 1.0,
+            bidirectional: true,
         }
     }
 }

@@ -1,5 +1,7 @@
 use crate::{
-    model, Angle, AssetSource, InstanceBundle, IsStatic, Model as SiteModel, ModelDescription, ModelDescriptionMarker, ModelInstance, ModelInstanceMarker, ModelMarker, NameInSite, Pose, Rotation, Scale
+    Angle, AssetSource, IsStatic, Model as SiteModel, ModelDescription,
+    ModelDescriptionMarker, ModelInstance, ModelInstanceBundle, ModelInstanceMarker, ModelMarker,
+    NameInSite, Pose, Rotation, Scale,
 };
 use glam::DVec2;
 use serde::{Deserialize, Serialize};
@@ -44,21 +46,31 @@ impl Model {
             is_static: IsStatic(self.static_),
             scale: Scale::default(),
             marker: ModelDescriptionMarker,
+            ..Default::default()
         }
     }
 
-    pub fn to_instance(&self, parent_id: u32, model_description_id: u32, number: &u32) -> ModelInstance {
+    pub fn to_instance(
+        &self,
+        parent_id: u32,
+        model_description_id: u32,
+        number: &u32,
+    ) -> ModelInstance {
         ModelInstance {
             parent: parent_id,
             model_description: model_description_id,
-            bundle: InstanceBundle {
+            bundle: ModelInstanceBundle {
                 name: NameInSite(self.instance_name.clone() + " #" + &number.to_string()),
+                source: AssetSource::Search(self.model_name.clone()),
                 pose: Pose {
                     trans: [self.x as f32, self.y as f32, self.z_offset as f32],
                     rot: Rotation::Yaw(Angle::Deg(self.yaw.to_degrees() as f32)),
                 },
+                scale: Scale::default(),
+                is_static: IsStatic(self.static_),
+                marker: ModelInstanceMarker,
+                ..Default::default()
             },
-            marker: ModelInstanceMarker
         }
     }
 }

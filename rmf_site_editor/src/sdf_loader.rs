@@ -27,8 +27,8 @@ use sdformat_rs::{SdfGeometry, SdfPose, Vector3d};
 
 use crate::site::{CollisionMeshMarker, VisualMeshMarker};
 use rmf_site_format::{
-    Angle, AssetSource, Category, IsStatic, Model, ModelMarker, ModelDescription, ModelInstance, NameInSite, Pose, PrimitiveShape,
-    Rotation, Scale,
+    Angle, AssetSource, Category, ModelInstanceBundle, IsStatic, Model, ModelDescription, ModelInstance,
+    ModelInstanceMarker, ModelMarker, NameInSite, Pose, PrimitiveShape, Rotation, Scale,
 };
 
 pub struct SdfPlugin;
@@ -179,13 +179,14 @@ fn spawn_geometry<'a, 'b>(
     let geometry = match geometry {
         SdfGeometry::Mesh(mesh) => Some(
             world
-                .spawn(Model {
+                .spawn(ModelInstanceBundle {
                     name: NameInSite(geometry_name.to_owned()),
                     source: compute_model_source(load_context, &mesh.uri)?,
                     pose,
-                    is_static: IsStatic(is_static),
                     scale: parse_scale(&mesh.scale),
-                    marker: ModelMarker,
+                    is_static: IsStatic(is_static),
+                    marker: ModelInstanceMarker,
+                    ..Default::default()
                 })
                 .id(),
         ),

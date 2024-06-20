@@ -27,7 +27,7 @@ use bevy::{
     render::view::RenderLayers,
 };
 use bevy_mod_outline::OutlineMeshExt;
-use rmf_site_format::{AssetSource, ModelMarker, Pending, Pose, Scale};
+use rmf_site_format::{AssetSource, ModelInstanceMarker, ModelMarker, Pending, Pose, Scale};
 use smallvec::SmallVec;
 use std::any::TypeId;
 
@@ -90,7 +90,7 @@ pub fn handle_model_loaded_events(
     mut commands: Commands,
     loading_models: Query<
         (Entity, &PendingSpawning, &Scale, Option<&RenderLayers>),
-        With<ModelMarker>,
+        With<ModelInstanceMarker>,
     >,
     mut current_scenes: Query<&mut ModelScene>,
     asset_server: Res<AssetServer>,
@@ -107,6 +107,7 @@ pub fn handle_model_loaded_events(
                 warn!("Broken reference to untyped asset, this should not happen!");
                 continue;
             };
+
             let h = &h.handle;
             let type_id = h.type_id();
             let model_id = if type_id == TypeId::of::<Gltf>() {
@@ -181,7 +182,7 @@ pub fn update_model_scenes(
             &TentativeModelFormat,
             Option<&Visibility>,
         ),
-        (Changed<TentativeModelFormat>, With<ModelMarker>),
+        (Changed<TentativeModelFormat>, With<ModelInstanceMarker>),
     >,
     asset_server: Res<AssetServer>,
     mut current_scenes: Query<&mut ModelScene>,
@@ -196,6 +197,8 @@ pub fn update_model_scenes(
         has_visibility: bool,
         commands: &mut Commands,
     ) {
+        println!("Spawning model with source: {:?}", source);
+    
         let mut commands = commands.entity(e);
         commands
             .insert(ModelScene {
@@ -287,7 +290,7 @@ pub fn update_model_scenes(
 
 pub fn update_model_tentative_formats(
     mut commands: Commands,
-    changed_models: Query<Entity, (Changed<AssetSource>, With<ModelMarker>)>,
+    changed_models: Query<Entity, (Changed<AssetSource>, With<ModelInstanceMarker>)>,
     mut loading_models: Query<
         (
             Entity,
@@ -295,7 +298,7 @@ pub fn update_model_tentative_formats(
             &PendingSpawning,
             &AssetSource,
         ),
-        With<ModelMarker>,
+        With<ModelInstanceMarker>,
     >,
     asset_server: Res<AssetServer>,
 ) {
@@ -403,7 +406,7 @@ pub fn make_models_selectable(
     mut commands: Commands,
     new_scene_roots: Query<Entity, (Added<ModelSceneRoot>, Without<Pending>)>,
     parents: Query<&Parent>,
-    scene_roots: Query<(&Selectable, Option<&RenderLayers>), With<ModelMarker>>,
+    scene_roots: Query<(&Selectable, Option<&RenderLayers>), With<ModelInstanceMarker>>,
     all_children: Query<&Children>,
     mesh_handles: Query<&Handle<Mesh>>,
     mut mesh_assets: ResMut<Assets<Mesh>>,

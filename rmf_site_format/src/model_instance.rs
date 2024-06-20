@@ -20,17 +20,32 @@ use crate::*;
 use bevy::prelude::{Bundle, Component, Reflect, ReflectComponent};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "bevy", derive(Bundle))]
-pub struct InstanceBundle {
-    pub name: NameInSite,
-    pub pose: Pose,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "bevy", derive(Component, Reflect))]
 #[cfg_attr(feature = "bevy", reflect(Component))]
 pub struct ModelInstanceMarker;
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+#[cfg_attr(feature = "bevy", derive(Bundle))]
+pub struct ModelInstanceBundle {
+    /// Name of the model
+    pub name: NameInSite,
+    /// Where the model should be loaded from
+    pub source: AssetSource,
+    /// Ths pose of the model
+    pub pose: Pose,
+    /// The motion properties of this model
+    pub kinematics: Kinematics,
+    /// Whether this model should be able to move in simulation
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub is_static: IsStatic,
+    /// Scale to be applied to the model
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub scale: Scale,
+    /// Only relevant for bevy
+    #[serde(skip)]
+    pub marker: ModelInstanceMarker,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ModelInstance {
@@ -40,6 +55,5 @@ pub struct ModelInstance {
     /// that this is instantiating.
     pub model_description: u32,
     #[serde(flatten)]
-    pub bundle: InstanceBundle,
-    pub marker:ModelInstanceMarker,
+    pub bundle: ModelInstanceBundle,
 }
