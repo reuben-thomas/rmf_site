@@ -191,7 +191,6 @@ impl Plugin for SitePlugin {
         .register_type::<NameInSite>()
         .register_type::<AssetSource>()
         .register_type::<Pose>()
-        .register_type::<Kinematics>()
         .register_type::<IsStatic>()
         .register_type::<Scale>()
         .register_type::<ModelMarker>()

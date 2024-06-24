@@ -5,13 +5,12 @@ use crate::{
     alignment::align_legacy_building, Affiliation, Anchor, Angle, AssetSource, AssociatedGraphs,
     Category, DisplayColor, Dock as SiteDock, Drawing as SiteDrawing, DrawingProperties,
     Fiducial as SiteFiducial, FiducialGroup, FiducialMarker, Guided, Lane as SiteLane, LaneMarker,
-    Level as SiteLevel, LevelElevation, LevelProperties as SiteLevelProperties, Motion, NameInSite,
-    NameOfSite, NavGraph, Navigation, OrientationConstraint, PixelsPerMeter, Pose,
-    PreferredSemiTransparency, RankingsInLevel, ReverseLane, Rotation, Scenario,
+    Level as SiteLevel, LevelElevation, LevelProperties as SiteLevelProperties, ModelDescription,
+    Motion, NameInSite, NameOfSite, NavGraph, Navigation, OrientationConstraint, PixelsPerMeter,
+    Pose, PreferredSemiTransparency, RankingsInLevel, ReverseLane, Rotation, Scenario,
     ScenarioProperties, Site, SiteProperties, Texture as SiteTexture, TextureGroup,
     DEFAULT_NAV_GRAPH_COLORS,
 };
-use crate::{model_instance, scenario};
 use bevy::prelude::default;
 use glam::{DAffine2, DMat3, DQuat, DVec2, DVec3, EulerRot};
 use ron::de;
@@ -162,9 +161,8 @@ impl BuildingMap {
         let mut fiducial_groups: BTreeMap<u32, FiducialGroup> = BTreeMap::new();
         let mut cartesian_fiducials: HashMap<u32, Vec<DVec2>> = HashMap::new();
 
-        let mut model_descriptions = BTreeMap::new();
+        let mut model_descriptions: BTreeMap<u32, ModelDescription> = BTreeMap::new();
         let mut model_description_name_map: HashMap<String, u32> = HashMap::new();
-        let mut model_descripton_count_map: HashMap<String, u32> = HashMap::new();
         let mut scenarios = BTreeMap::new();
         let default_scenario_id = site_id.next().unwrap();
         scenarios.insert(
@@ -491,28 +489,18 @@ impl BuildingMap {
                 models.insert(site_id.next().unwrap(), model.to_site());
             }
 
-            for model_sdf in &level.models {
-                let model_description_id = model_description_name_map
-                    .entry(model_sdf.model_name.clone())
-                    .or_insert(site_id.next().unwrap());
-                model_descriptions.insert(*model_description_id, model_sdf.to_description());
-
-                let model_description_count = model_descripton_count_map
-                    .entry(model_sdf.model_name.clone())
-                    .and_modify(|i| *i += 1)
-                    .or_insert(1);
+            let mut model_instances = BTreeMap::new();
+            for model in &level.models {
+                let model_instance = model.to_instance(
+                    &mut model_descriptions,
+                    &mut model_description_name_map,
+                    &mut site_id,
+                );
                 scenarios
                     .get_mut(&default_scenario_id)
-                    .unwrap()
+                    .expect("Default scenario not found")
                     .model_instances
-                    .insert(
-                        site_id.next().unwrap(),
-                        model_sdf.to_instance(
-                            level_id,
-                            *model_description_id,
-                            model_description_count,
-                        ),
-                    );
+                    .insert(site_id.next().unwrap(), model_instance);
             }
 
             let mut physical_cameras = BTreeMap::new();
@@ -557,6 +545,7 @@ impl BuildingMap {
                     physical_cameras,
                     walls,
                     rankings,
+                    model_instances,
                 },
             );
 

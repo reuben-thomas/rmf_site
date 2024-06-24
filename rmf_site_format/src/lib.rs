@@ -83,12 +83,6 @@ pub use misc::*;
 pub mod model;
 pub use model::*;
 
-pub mod model_description;
-pub use model_description::*;
-
-pub mod model_instance;
-pub use model_instance::*;
-
 pub mod nav_graph;
 pub use nav_graph::*;
 

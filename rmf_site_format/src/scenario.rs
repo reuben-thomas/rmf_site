@@ -40,5 +40,5 @@ pub struct Scenario {
     /// Basic properties of the scenario
     pub properties: ScenarioProperties,
     /// Instances of models contained in the scenario
-    pub model_instances: BTreeMap<u32, ModelInstance>,
+    pub model_instances: BTreeMap<u32, ModelInstance<u32>>,
 }

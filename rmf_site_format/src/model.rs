@@ -57,3 +57,48 @@ impl Default for Model {
         }
     }
 }
+
+///
+///
+///
+///
+///
+///
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "bevy", derive(Component, Reflect))]
+#[cfg_attr(feature = "bevy", reflect(Component))]
+pub struct ModelDescriptionMarker;
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "bevy", derive(Bundle))]
+pub struct ModelDescription {
+    pub name: NameInSite,
+    pub source: AssetSource,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub is_static: IsStatic,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub scale: Scale,
+    #[serde(skip)]
+    pub marker: ModelDescriptionMarker,
+    #[serde(skip)]
+    pub group: Group,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "bevy", derive(Component, Reflect))]
+#[cfg_attr(feature = "bevy", reflect(Component))]
+pub struct ModelInstanceMarker;
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+#[cfg_attr(feature = "bevy", derive(Bundle))]
+pub struct ModelInstance<T: RefTrait> {
+    pub name: NameInSite,
+    pub pose: Pose,
+    #[serde(skip_serializing_if = "is_default")]
+    pub model_description: Affiliation<T>,
+    #[serde(skip)]
+    pub marker: ModelInstanceMarker,
+}
+
+

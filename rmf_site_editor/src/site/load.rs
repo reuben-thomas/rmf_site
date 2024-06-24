@@ -213,7 +213,9 @@ fn generate_site_entities(
                 for (model_id, model) in &level_data.models {
                     level.spawn(model.clone()).insert(SiteID(*model_id));
                     consider_id(*model_id);
+                    println!("Model ID: {}", model_id);
                 }
+
 
                 for (physical_camera_id, physical_camera) in &level_data.physical_cameras {
                     level
@@ -347,36 +349,6 @@ fn generate_site_entities(
             .id();
         id_to_entity.insert(*scenario_id, scenario_entity);
         consider_id(*scenario_id);
-
-        for (model_instance_id, model_instance) in &scenario.model_instances {
-            let Some(model_description_entity) =
-                id_to_entity.get(&model_instance.model_description).cloned()
-            else {
-                error! {
-                    "Failed to load model description for model instance {model_instance_id:?} in scenario {scenario_id:?}"
-                };
-                continue;
-            };
-
-            let Some(model_instance_parent_entity) =
-                id_to_entity.get(&model_instance.parent).cloned()
-            else {
-                let parent_id = model_instance.parent;
-                error! {
-                    "Failed to load parent {parent_id:?} for model instance {model_instance_id:?} in scenario {scenario_id:?}"
-                }
-                continue;
-            };
-
-            let model_instance_entity = commands
-                .spawn(model_instance.bundle.clone())
-                .insert(SiteID(*model_instance_id))
-                .insert(ModelInstanceMarker)
-                .id();
-            id_to_entity.insert(*model_instance_id, model_instance_entity);
-            consider_id(*model_instance_id);
-            commands.entity(model_instance_parent_entity).add_child(model_instance_entity);
-        }
     }
 
     let nav_graph_rankings = match RecencyRanking::<NavGraphMarker>::from_u32(

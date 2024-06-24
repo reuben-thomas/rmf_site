@@ -68,6 +68,8 @@ pub struct Level {
     pub rankings: RankingsInLevel,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub models: BTreeMap<u32, Model>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub model_instances: BTreeMap<u32, ModelInstance<u32>>,
 }
 
 impl Level {
@@ -81,6 +83,7 @@ impl Level {
             floors: Default::default(),
             lights: Default::default(),
             models: Default::default(),
+            model_instances: Default::default(),
             physical_cameras: Default::default(),
             walls: Default::default(),
         }
