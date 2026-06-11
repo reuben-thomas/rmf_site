@@ -23,17 +23,24 @@ jobs:
     - name: apt-deps
       run: |
         sudo apt-get update
-        sudo apt-get install libasound2-dev libudev-dev binaryen
+        sudo apt-get install libasound2-dev libudev-dev
+
+    - name: wasm-opt
+      uses: sigoden/install-binary@v1
+      with:
+        repo: WebAssembly/binaryen
+        tag: version_123
+        name: wasm-opt
 
     - name: cargo-deps
       run: |
-        cargo install wasm-bindgen-cli
+        cargo install -f wasm-bindgen-cli --version 0.2.100
 
     - uses: actions/checkout@v3
 
     - name: build rmf_site_format
       run: |
-        cd rmf_site_format
+        cd crates/rmf_site_format
         cargo build
 
     - name: build rmf_site_editor

@@ -16,6 +16,14 @@ Rust and Bevy allow The RMF Site Editor to target both desktop (Windows/Linux/Ma
 
 [Click here to use the web build in your browser](https://open-rmf.github.io/rmf_site/).
 
+# Project Integration
+
+To use the Site Editor in an Open-RMF project to configure a simulation or deployment,
+follow the instructions at [`rmf_site_ros2`](https://github.com/open-rmf/rmf_site_ros2).
+There you will find `rmf_site_cmake` which you can use to generate simulations and
+navigation graphs from a Site Editor project, and `rmf_site_demos` which shows how to
+set up a cmake project to build and launch your sites.
+
 # Helpful Links
 
  * [Bevy Engine](https://bevyengine.org/)
@@ -55,9 +63,15 @@ Make sure you install rust from the main rust website. Cargo should take care of
 
 These are only needed if you're going to build a WebAssembly binary:
 ```bash
-$ sudo apt install binaryen
-$ cargo install wasm-bindgen-cli basic-http-server
+$ cargo install -f wasm-bindgen-cli --version 0.2.100
+$ cargo install basic-http-server
 $ rustup target add wasm32-unknown-unknown
+
+# binaryen version >= 110 required for a bug fix for wasm-opt
+# Refer to https://github.com/emilk/egui/pull/6848
+$ wget -P ~/ https://github.com/WebAssembly/binaryen/releases/download/version_123/binaryen-version_123-x86_64-linux.tar.gz
+$ tar xf ~/binaryen-version_123-x86_64-linux.tar.gz -C ~/
+$ export PATH=$PATH:~/binaryen-version_123/bin
 ```
 
 # Build and Run (Desktop)
@@ -76,7 +90,7 @@ Use the `--release` flag for better runtime performance.
 # Build and Run (WebAssembly)
 
 TODO: The web assembly version is highly experimental, currently it lacks important features like
-saving/loading of map files.
+saving/loading of map files. However, you may opt to export the JSON file via download or copy/paste.
 
 ```bash
 $ scripts/build-web.sh

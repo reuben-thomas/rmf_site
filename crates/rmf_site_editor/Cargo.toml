@@ -1,0 +1,82 @@
+[package]
+name = "rmf_site_editor"
+version = "0.0.3"
+# We need to keep this on edition 2021 because of a strange linking issue:
+# https://github.com/rust-lang/cargo/issues/8531#issuecomment-3446171638
+edition = "2021"
+authors = ["Grey <mxgrey@intrinsic.ai>"]
+description = "File format parsing for rmf_site_editor"
+license = "Apache-2.0"
+repository = "https://github.com/open-rmf/rmf_site"
+readme = "../../README.md"
+
+[lib]
+name = "rmf_site_editor"
+
+[[bin]]
+path = "src/main.rs"
+name = "rmf_site_editor"
+
+[[example]]
+name = "extending_site_editor"
+path = "examples/extending_menu.rs"
+
+[dependencies]
+strum = {workspace = true}
+bevy_mod_outline = {workspace = true}
+bevy_gltf_export = {workspace = true}
+bevy_stl = {workspace = true}
+bevy_obj = { workspace = true, features = ["scene"] }
+smallvec = {workspace = true}
+serde = { workspace = true, features = ["derive"] }
+serde_yaml = {workspace = true}
+serde_json = {workspace = true}
+futures-lite = {workspace = true}
+bevy = { workspace = true, features = ["pnm", "jpeg", "tga"] }
+dirs = {workspace = true}
+thread_local = {workspace = true}
+geo = {workspace = true}
+thiserror = {workspace = true}
+rmf_site_format = {workspace = true, features = ["bevy"] }
+rmf_site_animate = {workspace = true}
+rmf_site_camera = {workspace = true}
+rmf_site_mesh = {workspace = true}
+rmf_site_picking = {workspace = true}
+rmf_site_egui = {workspace = true}
+mapf = {workspace = true}
+itertools = {workspace = true}
+bitfield = {workspace = true}
+crossbeam-channel = {workspace = true}
+tracing = {workspace = true}
+tracing-subscriber = {workspace = true}
+rfd = {workspace = true}
+urdf-rs = {workspace = true}
+utm = {workspace = true}
+sdformat = {workspace = true}
+gz-fuel = {workspace = true}
+pathdiff = {workspace = true}
+ehttp = { workspace = true, features = ["native-async"] }
+image = { workspace = true}
+nalgebra = {workspace = true}
+anyhow = {workspace = true}
+uuid = { workspace = true, features = ["v4"] }
+bytemuck = {workspace = true}
+bevy_infinite_grid = {workspace = true}
+bevy_rich_text3d = {workspace = true}
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+clap = { workspace = true, features = ["color", "derive", "help", "usage", "suggestions"] }
+bevy_egui = { workspace = true, default-features = true }
+crossflow = { workspace = true}
+web-time = {workspace = true}
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bevy_egui = { workspace = true, default-features = false, features = ["open_url", "default_fonts", "render"] }
+crossflow = { workspace = true, features = ["single_threaded_async"]}
+js-sys = { workspace = true }
+wasm-bindgen = { workspace = true }
+web-sys = { workspace = true, features = ["Clipboard", "Window", "Navigator", "Blob", "Url", "HtmlAnchorElement", "Document"] }
+web-time = {workspace = true}
+
+[dev-dependencies]
+file_diff = {workspace = true}
+testdir = {workspace = true}

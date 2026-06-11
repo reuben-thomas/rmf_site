@@ -1,0 +1,23 @@
+[package]
+name = "rmf_site_mesh"
+version = "0.0.2"
+edition = "2024"
+authors = ["Grey <mxgrey@intrinsic.ai>"]
+description = "Mesh building utilties for rmf_site_editor"
+license = "Apache-2.0"
+repository = "https://github.com/open-rmf/rmf_site"
+readme = "README.md"
+
+[dependencies]
+bevy_ecs = {workspace = true}
+bevy_math = {workspace = true}
+bevy_render = {workspace = true}
+bevy_reflect = {workspace = true}
+bevy_asset = {workspace = true}
+bevy_derive = {workspace = true}
+bevy_color = {workspace = true}
+bevy_mod_outline = {workspace = true}
+
+[dev-dependencies]
+bevy = {workspace = true, features = ["dynamic_linking"]}
+bevy-inspector-egui = {workspace = true}

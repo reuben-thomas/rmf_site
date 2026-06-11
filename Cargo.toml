@@ -1,7 +1,6 @@
 [workspace]
 members = [
-    "rmf_site_editor",
-    "rmf_site_format",
+    "crates/*"
 ]
 
 # This is needed for packages that are part of a workspace to use the 2nd version
@@ -9,7 +8,7 @@ members = [
 # enabled with edition="2021", but it seems that when a crate is in a workspace,
 # the workspace needs to explicitly specify this.
 # For more see: https://doc.rust-lang.org/edition-guide/rust-2021/default-cargo-resolver.html
-resolver = "2"
+resolver = "3"
 
 # Compile time optimizations as suggested in
 # https://bevyengine.org/learn/quick-start/getting-started/setup/#compile-with-performance-optimizations
@@ -20,3 +19,108 @@ opt-level = 1
 # Enable high optimizations for dependencies (incl. Bevy), but not for our code:
 [profile.dev.package."*"]
 opt-level = 3
+
+[workspace.dependencies]
+serde = { version = "1.0" }
+strum = { version = "0.26", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png"] } # Keep in sync with bevy image version
+rmf_site_picking = { path = "crates/rmf_site_picking", version = "0.0.2"}
+rmf_site_format = { path = "crates/rmf_site_format", version = "0.0.2" }
+rmf_site_editor = { path = "crates/rmf_site_editor", version = "0.0.3"}
+rmf_site_editor_web = { path = "crates/rmf_site_editor_web", version = "0.0.2"}
+rmf_site_animate = {path = "crates/rmf_site_animate", version = "0.0.2"}
+rmf_site_camera = {path = "crates/rmf_site_camera", version = "0.0.2"}
+rmf_site_mesh = {path = "crates/rmf_site_mesh", version = "0.0.2"}
+rmf_site_egui = {path = "crates/rmf_site_egui", version = "0.0.2"}
+mapf = "0.3"
+serde_yaml = "0.8.23"
+serde_json = "1.0"
+thiserror = "1.0"
+glam = { version = "0.29" } # Ensure that this match's bevy_math's glam before updating.
+uuid = { version = "1.13"}
+sdformat = "0.1"
+urdf-rs = { version = "0.7.3"}
+once_cell = "1"
+pathdiff = "0.2"
+bevy_mod_outline = "0.10.1"
+bevy_gltf_export = "0.1.1"
+bevy_stl = "0.16"
+bevy_obj = "0.16"
+smallvec = "1.15"
+futures-lite = "1.12.0"
+dirs = "5.0"
+thread_local = "1.1"
+geo = "0.27"
+itertools = "0.11"
+bitfield = "0.19"
+crossbeam-channel = "0.5"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.1"
+rfd = "0.12"
+utm = "0.1.6"
+gz-fuel = "0.1"
+ehttp = { version = "0.4"}
+nalgebra = "0.32.5"
+anyhow = "1.0"
+# Ensure this matches other downstream crate's bevy_egui version (E.G: bevy-inspector-egui) before updating.
+bevy_egui = { version = "0.34", default-features = false }
+bevy-inspector-egui = "0.31"
+crossflow = "0.0.2"
+float_eq = "1.0"
+wasm-bindgen = "=0.2.100" # Remember to update the README if we change this version number
+console_error_panic_hook = "0.1.7"
+getrandom = { version = "0.3.3"}
+clap = { version = "4.0.10" }
+bytemuck = {version = "1.22"}
+bevy_infinite_grid = { version = "0.15"}
+testdir = "0.9"
+file_diff = "1.0"
+web-sys = "0.3"
+web-time = "1"
+js-sys = "0.3"
+
+bevy = {version = "0.16", features = ["configurable_error_handler"]}
+bevy_a11y = "0.16"
+bevy_animation = "0.16"
+bevy_app = "0.16"
+bevy_asset = "0.16"
+bevy_audio = "0.16"
+bevy_color = "0.16"
+bevy_core_pipeline = "0.16"
+bevy_derive = "0.16"
+bevy_dev_tools = "0.16"
+bevy_diagnostic = "0.16"
+bevy_dylib = "0.16"
+bevy_ecs = {version = "0.16", features = ["configurable_error_handler"]}
+bevy_encase_derive = "0.16"
+bevy_gilrs = "0.16"
+bevy_gizmos = "0.16"
+bevy_gltf = "0.16"
+bevy_image = "0.16"
+bevy_input = "0.16"
+bevy_input_focus = "0.16"
+bevy_internal = "0.16"
+bevy_log = "0.16"
+bevy_macro_utils = "0.16"
+bevy_math = "0.16"
+bevy_mesh = "0.16"
+bevy_mikktspace = "0.16"
+bevy_pbr = "0.16"
+bevy_picking = "0.16"
+bevy_platform = "0.16"
+bevy_ptr = "0.16"
+bevy_reflect = "0.16"
+bevy_remote = "0.16"
+bevy_render = "0.16"
+bevy_rich_text3d = "0.4.1"
+bevy_scene = "0.16"
+bevy_sprite = "0.16"
+bevy_state = "0.16"
+bevy_tasks = "0.16"
+bevy_text = "0.16"
+bevy_time = "0.16"
+bevy_transform = "0.16"
+bevy_ui = "0.16"
+bevy_utils = "0.16"
+bevy_window = "0.16"
+bevy_winit = "0.16"
