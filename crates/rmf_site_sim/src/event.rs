@@ -1,12 +1,12 @@
-use std::collections::BTreeMap;
-
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use std::collections::BTreeMap;
 
-use crate::clock::{AddSimulationClock, SimulationClock, SimulationTime, advance_clock};
+use crate::SimTime;
+use crate::compute::{AddComputeClock, ComputeClock, ComputeTimeStep, advance_clock};
 
 pub trait DiscreteEvent: Event {
-    type Time: SimulationTime;
+    type Time: SimTime;
 
     fn time(&self) -> Self::Time;
     fn event_source(&self) -> Entity;
@@ -34,17 +34,17 @@ impl<E: DiscreteEvent> DiscreteEvents<E> {
 
 pub fn update_clock<E: DiscreteEvent>(
     events: Res<DiscreteEvents<E>>,
-    mut clock: ResMut<SimulationClock<E::Time>>,
+    mut clock: ResMut<ComputeClock<E::Time>>,
 ) {
     if let Some(time) = events.next_time() {
-        clock.push(time);
+        clock.add(time);
     }
 }
 
 #[derive(SystemParam)]
 pub struct DiscreteEventReader<'w, E: DiscreteEvent> {
     events: ResMut<'w, DiscreteEvents<E>>,
-    clock: Res<'w, SimulationClock<<E as DiscreteEvent>::Time>>,
+    clock: Res<'w, ComputeClock<<E as DiscreteEvent>::Time>>,
 }
 
 impl<E: DiscreteEvent> DiscreteEventReader<'_, E> {
@@ -79,19 +79,22 @@ impl<E: DiscreteEvent> DiscreteEventWriter<'_, E> {
     }
 }
 
-pub trait AddDiscreteEvent {
-    fn add_discrete_event<E: DiscreteEvent>(&mut self) -> &mut Self
+pub trait RegisterDiscreteEvent {
+    fn register_discrete_event<E: DiscreteEvent>(&mut self) -> &mut Self
     where
         E::Time: Default;
 }
 
-impl AddDiscreteEvent for App {
-    fn add_discrete_event<E: DiscreteEvent>(&mut self) -> &mut Self
+impl RegisterDiscreteEvent for App {
+    fn register_discrete_event<E: DiscreteEvent>(&mut self) -> &mut Self
     where
         E::Time: Default,
     {
-        self.init_simulation_clock::<E::Time>()
+        self.add_compute_clock::<E::Time>()
             .init_resource::<DiscreteEvents<E>>()
-            .add_systems(First, update_clock::<E>.before(advance_clock::<E::Time>))
+            .add_systems(
+                ComputeTimeStep,
+                update_clock::<E>.before(advance_clock::<E::Time>),
+            )
     }
 }

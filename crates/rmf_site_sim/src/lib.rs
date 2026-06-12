@@ -1,27 +1,26 @@
 use bevy::prelude::*;
+use std::fmt::Debug;
+use std::hash::Hash;
 
-mod clock;
+pub use component::*;
+pub use compute::*;
+pub use event::*;
+pub use world::*;
+
+mod component;
+mod compute;
 mod event;
 mod world;
-
-pub use clock::{AddSimulationClock, SimulationClock, SimulationTime, advance_clock};
-pub use event::{
-    AddDiscreteEvent, DiscreteEvent, DiscreteEventReader, DiscreteEventWriter, DiscreteEvents,
-    update_clock,
-};
-pub use world::SimulationWorld;
 
 pub struct SimulationPlugin;
 
 impl Plugin for SimulationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_observer(initialize_simulation);
+        app.add_plugins(ComputePlugin);
     }
 }
 
-#[derive(Event, Default)]
-pub struct InitializeSimulation;
+/// A trait for types that can be used as a simulation time.
+pub trait SimTime: Ord + Hash + Copy + Send + Sync + Debug + 'static {}
 
-fn initialize_simulation(_trigger: Trigger<InitializeSimulation>, mut _commands: Commands) {
-    debug!("Initializing simulation");
-}
+impl<T: Ord + Hash + Copy + Send + Sync + Debug + 'static> SimTime for T {}
