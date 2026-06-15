@@ -2,12 +2,10 @@ use bevy::prelude::*;
 use std::fmt::Debug;
 use std::hash::Hash;
 
-pub use component::*;
 pub use compute::*;
 pub use event::*;
 pub use world::*;
 
-mod component;
 mod compute;
 mod event;
 mod world;

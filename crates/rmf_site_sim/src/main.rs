@@ -13,7 +13,6 @@ fn main() {
         .register_discrete_event::<ClientRequest>()
         .register_discrete_event::<Request>()
         .register_discrete_event::<Response>()
-        .register_sim_component::<u32, RequestCount>()
         .add_systems(Startup, (setup, client_generate.after(setup)))
         .add_systems(Update, (load_balancer, server, client_collect))
         .add_systems(
@@ -163,7 +162,7 @@ fn server(
     }
 }
 
-fn log_compute_results<Time: SimTime, T: SimComponent + Debug>(
+fn log_compute_results<Time: SimTime, T: Component + Debug>(
     results: Option<Res<ComputeResults<Time, T>>>,
 ) {
     let Some(results) = results else {

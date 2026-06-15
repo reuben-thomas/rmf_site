@@ -27,12 +27,24 @@ impl<E: DiscreteEvent> Default for DiscreteEvents<E> {
 }
 
 impl<E: DiscreteEvent> DiscreteEvents<E> {
-    pub fn next_time(&self) -> Option<E::Time> {
+    fn next_time(&self) -> Option<E::Time> {
         self.queue.keys().next().copied()
+    }
+
+    pub fn at(&mut self, now: E::Time) -> Vec<E> {
+        let mut events = Vec::new();
+        while let Some((&time, _)) = self.queue.first_key_value() {
+            if time > now {
+                break;
+            }
+            let (_, batch) = self.queue.pop_first().unwrap();
+            events.extend(batch);
+        }
+        events
     }
 }
 
-pub fn update_clock<E: DiscreteEvent>(
+fn update_clock<E: DiscreteEvent>(
     events: Res<DiscreteEvents<E>>,
     mut clock: ResMut<ComputeClock<E::Time>>,
 ) {
@@ -50,17 +62,7 @@ pub struct DiscreteEventReader<'w, E: DiscreteEvent> {
 impl<E: DiscreteEvent> DiscreteEventReader<'_, E> {
     pub fn read(&mut self) -> Vec<E> {
         let now = self.clock.now();
-        let ready_times: Vec<E::Time> = self
-            .events
-            .queue
-            .range(..=now)
-            .map(|(&time, _)| time)
-            .collect();
-        let mut events = Vec::new();
-        for time in ready_times {
-            events.extend(self.events.queue.remove(&time).unwrap());
-        }
-        events
+        self.events.at(now)
     }
 }
 

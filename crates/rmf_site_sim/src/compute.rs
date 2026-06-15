@@ -8,18 +8,16 @@ use bevy::ecs::schedule::ScheduleLabel;
 use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
 
-use crate::{SimComponent, SimTime};
+use crate::SimTime;
 
 /// Plugin to allow computing a simulation.
 pub struct ComputePlugin;
 
 impl Plugin for ComputePlugin {
     fn build(&self, app: &mut App) {
-        if !app.is_plugin_added::<StatesPlugin>() {
-            app.add_plugins(StatesPlugin);
-        }
-        app.init_state::<ComputeState>();
-        app.world_mut()
+        app.add_plugins(StatesPlugin)
+            .init_state::<ComputeState>()
+            .world_mut()
             .resource_mut::<MainScheduleOrder>()
             .insert_after(Update, ComputeTimeStep);
     }
@@ -35,7 +33,7 @@ pub struct ComputeResultMarker<T: SimTime> {
     pub time: T,
 }
 
-pub struct ComputeResult<T: SimComponent> {
+pub struct ComputeResult<T: Component> {
     pub changes: HashMap<Entity, T>,
 }
 
@@ -126,11 +124,11 @@ impl AddComputeClock for App {
 
 /// Stores the [`ComputeResult`] for each computed time step.
 #[derive(Resource)]
-pub struct ComputeResults<Time: SimTime, T: SimComponent> {
+pub struct ComputeResults<Time: SimTime, T: Component> {
     pub results: HashMap<Time, ComputeResult<T>>,
 }
 
-impl<Time: SimTime, T: SimComponent> Default for ComputeResults<Time, T> {
+impl<Time: SimTime, T: Component> Default for ComputeResults<Time, T> {
     fn default() -> Self {
         Self {
             results: HashMap::new(),
@@ -138,7 +136,7 @@ impl<Time: SimTime, T: SimComponent> Default for ComputeResults<Time, T> {
     }
 }
 
-pub fn update_compute_result<T: SimTime, C: SimComponent + Clone>(
+pub fn update_compute_result<T: SimTime, C: Component + Clone>(
     clock: Res<ComputeClock<T>>,
     changed: Query<(Entity, &C), Changed<C>>,
     mut results: ResMut<ComputeResults<T, C>>,
