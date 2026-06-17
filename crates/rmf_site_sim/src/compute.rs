@@ -63,7 +63,7 @@ impl<T: SimTime> ComputeClock<T> {
     pub fn add(&mut self, time: T) {
         if time <= self.current {
             panic!(
-                "Tried to push time {time:?} that is not greater than the current time {:?}.",
+                "Tried to add time {time:?} that is not greater than the current time {:?}.",
                 self.now()
             )
         }

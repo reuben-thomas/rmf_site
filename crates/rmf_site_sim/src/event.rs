@@ -44,7 +44,7 @@ impl<E: DiscreteEvent> DiscreteEvents<E> {
     }
 }
 
-fn update_clock<E: DiscreteEvent>(
+pub fn update_clock<E: DiscreteEvent>(
     events: Res<DiscreteEvents<E>>,
     mut clock: ResMut<ComputeClock<E::Time>>,
 ) {

@@ -7,6 +7,11 @@ description = "Discrete event simulation for the rmf_site_editor"
 license = "Apache-2.0"
 repository = "https://github.com/open-rmf/rmf_site"
 readme = "README.md"
+autoexamples = false
+
+[[bin]]
+name = "request_handling"
+path = "examples/request_handling.rs"
 
 [dependencies]
 bevy = {workspace = true, features = ["dynamic_linking"]}

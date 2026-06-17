@@ -4,22 +4,24 @@ use rmf_site_sim::*;
 use std::fmt::Debug;
 
 fn main() {
-    App::new()
-        .add_plugins(MinimalPlugins)
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
         .add_plugins(LogPlugin::default())
         .add_plugins(SimulationPlugin)
-        // Representation of a load balancer system:
-        // client_generate --[ClientRequest]--> load_balancer --[Request]--> server --[Response]--> client_collect
-        .register_discrete_event::<ClientRequest>()
-        .register_discrete_event::<Request>()
-        .register_discrete_event::<Response>()
-        .add_systems(Startup, (setup, client_generate.after(setup)))
-        .add_systems(Update, (load_balancer, server, client_collect))
-        .add_systems(
-            OnEnter(ComputeState::Complete),
-            log_compute_results::<u32, RequestCount>,
-        )
-        .run();
+        .add_systems(Startup, spawn_entities);
+
+    // client_generate --[ClientRequest]--> load_balancer --[Request]--> server --[Response]--> client_collect
+    let simulation_set = SimulationSetBuilder::new(app.world_mut())
+        .register_event::<ClientRequest>()
+        .register_event::<Request>()
+        .register_event::<Response>()
+        .register_tracked_component::<RequestCount>()
+        .add_setup_systems(client_generate)
+        .add_systems((load_balancer, server, client_collect))
+        .build();
+    app.world_mut().spawn(simulation_set);
+
+    app.run();
 }
 
 #[derive(Component)]
@@ -81,7 +83,7 @@ discrete_event!(ClientRequest);
 discrete_event!(Request);
 discrete_event!(Response);
 
-fn setup(mut commands: Commands) {
+fn spawn_entities(mut commands: Commands) {
     commands.spawn((Client, RequestCount::default()));
     commands.spawn((LoadBalancer, RequestCount::default()));
     for _ in 0..3 {
@@ -159,19 +161,6 @@ fn server(
             target: req.source,
             time: req.time + 1,
         });
-    }
-}
-
-fn log_compute_results<Time: SimTime, T: Component + Debug>(
-    results: Option<Res<ComputeResults<Time, T>>>,
-) {
-    let Some(results) = results else {
-        return;
-    };
-    for (time, result) in &results.results {
-        for (entity, component) in &result.changes {
-            info!("t={time:?}: {entity} -> {component:?}");
-        }
     }
 }
 
