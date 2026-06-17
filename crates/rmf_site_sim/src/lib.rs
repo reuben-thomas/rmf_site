@@ -4,48 +4,86 @@ use bevy::ecs::schedule::ScheduleLabel;
 use bevy::ecs::system::ScheduleSystem;
 use bevy::prelude::*;
 use std::collections::HashSet;
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::marker::PhantomData;
 
 pub use compute::*;
 pub use event::*;
+pub use time::*;
 
 mod compute;
 mod event;
+mod time;
 
 pub struct SimulationPlugin;
 
 impl Plugin for SimulationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(ComputePlugin);
+        app.add_plugins(ComputePlugin)
+            .add_event::<ComputeSimulation>()
+            .add_systems(Update, queue_simulation_runs);
     }
 }
 
-/// Type that can be used as a simulation time.
-pub trait SimTime: Ord + Hash + Copy + Send + Sync + Debug + 'static {}
+#[derive(Event, Default)]
+pub struct ComputeSimulation;
 
-// Blanket implementation for any type that satisfies the required trait bounds to be used as a [`SimTime`].
-impl<T: Ord + Hash + Copy + Send + Sync + Debug + 'static> SimTime for T {}
+fn queue_simulation_runs(mut events: EventReader<ComputeSimulation>, mut commands: Commands) {
+    for _ in events.read() {
+        commands.queue(run_simulations);
+    }
+}
+
+fn run_simulations(world: &mut World) {
+    let entities: Vec<Entity> = world
+        .query_filtered::<Entity, With<SimulationSet>>()
+        .iter(world)
+        .collect();
+
+    for entity in entities {
+        let Some(mut simulation_set) = world.entity_mut(entity).take::<SimulationSet>() else {
+            continue;
+        };
+        simulation_set.run(world);
+        world.entity_mut(entity).insert(simulation_set);
+    }
+}
+
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum SimulationSystems {
+    Clock,
+    Compute,
+}
 
 /// A set of entities, components, systems, and resources that can be used to compute a simulation.
 #[derive(Component)]
-pub struct SimulationSet<T: SimTime> {
+pub struct SimulationSet {
     setup_schedule: Schedule,
     compute_schedule: Schedule,
     untracked_components: HashSet<ComponentId>,
     tracked_components: HashSet<ComponentId>,
-    _time: PhantomData<T>,
 }
 
-impl<T: SimTime> SimulationSet<T> {
+impl SimulationSet {
     fn new() -> Self {
+        let mut compute_schedule = Schedule::new(ComputeTimeStep);
+        compute_schedule
+            .configure_sets(SimulationSystems::Clock.before(SimulationSystems::Compute));
         Self {
             setup_schedule: Schedule::new(SetupSimulation),
-            compute_schedule: Schedule::new(ComputeTimeStep),
+            compute_schedule,
             untracked_components: HashSet::default(),
             tracked_components: HashSet::default(),
-            _time: PhantomData,
+        }
+    }
+
+    fn run(&mut self, world: &mut World) {
+        world.insert_resource(ComputeClock::default());
+        self.setup_schedule.run(world);
+        loop {
+            let previous = world.resource::<ComputeClock>().now();
+            self.compute_schedule.run(world);
+            if world.resource::<ComputeClock>().now() == previous {
+                break;
+            }
         }
     }
 }
@@ -53,12 +91,12 @@ impl<T: SimTime> SimulationSet<T> {
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SetupSimulation;
 
-pub struct SimulationSetBuilder<'a, T: SimTime> {
+pub struct SimulationSetBuilder<'a> {
     world: &'a mut World,
-    simulation_set: SimulationSet<T>,
+    simulation_set: SimulationSet,
 }
 
-impl<'a, T: SimTime> SimulationSetBuilder<'a, T> {
+impl<'a> SimulationSetBuilder<'a> {
     pub fn new(world: &'a mut World) -> Self {
         Self {
             world,
@@ -77,7 +115,9 @@ impl<'a, T: SimTime> SimulationSetBuilder<'a, T> {
     // TODO:
     // - Add a deterministic total ordering for systems unless otherwise specified in the schedule configs
     pub fn add_systems<M>(mut self, systems: impl IntoScheduleConfigs<ScheduleSystem, M>) -> Self {
-        self.simulation_set.compute_schedule.add_systems(systems);
+        self.simulation_set
+            .compute_schedule
+            .add_systems(systems.in_set(SimulationSystems::Compute));
         self
     }
 
@@ -90,21 +130,22 @@ impl<'a, T: SimTime> SimulationSetBuilder<'a, T> {
 
     // TODO:
     // - Can events be automatically registered from the provided systems?
-    pub fn register_event<E: DiscreteEvent<Time = T>>(mut self) -> Self
-    where
-        T: Default,
-    {
-        if !self.world.contains_resource::<ComputeClock<E::Time>>() {
-            self.world.init_resource::<ComputeClock<E::Time>>();
-            self.simulation_set
-                .compute_schedule
-                .add_systems(advance_clock::<E::Time>.run_if(in_state(ComputeState::Computing)));
+    pub fn register_event<E: DiscreteEvent>(mut self) -> Self {
+        if !self.world.contains_resource::<ComputeClock>() {
+            self.world.init_resource::<ComputeClock>();
+            self.simulation_set.compute_schedule.add_systems(
+                advance_clock
+                    .in_set(SimulationSystems::Clock)
+                    .run_if(in_state(ComputeState::Computing)),
+            );
         }
 
         self.world.init_resource::<DiscreteEvents<E>>();
-        self.simulation_set
-            .compute_schedule
-            .add_systems(update_clock::<E>.before(advance_clock::<E::Time>));
+        self.simulation_set.compute_schedule.add_systems(
+            update_clock::<E>
+                .in_set(SimulationSystems::Clock)
+                .before(advance_clock),
+        );
         self
     }
 
@@ -134,7 +175,7 @@ impl<'a, T: SimTime> SimulationSetBuilder<'a, T> {
         }
     }
 
-    pub fn build(mut self) -> SimulationSet<T> {
+    pub fn build(mut self) -> SimulationSet {
         self.register_system_components_as_untracked();
         self.simulation_set
     }

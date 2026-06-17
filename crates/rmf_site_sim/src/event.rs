@@ -6,16 +6,14 @@ use crate::SimTime;
 use crate::compute::{AddComputeClock, ComputeClock, ComputeTimeStep, advance_clock};
 
 pub trait DiscreteEvent: Event {
-    type Time: SimTime;
-
-    fn time(&self) -> Self::Time;
+    fn time(&self) -> SimTime;
     fn event_source(&self) -> Entity;
     fn event_target(&self) -> Entity;
 }
 
 #[derive(Resource)]
 pub struct DiscreteEvents<E: DiscreteEvent> {
-    queue: BTreeMap<E::Time, Vec<E>>,
+    queue: BTreeMap<SimTime, Vec<E>>,
 }
 
 impl<E: DiscreteEvent> Default for DiscreteEvents<E> {
@@ -27,11 +25,11 @@ impl<E: DiscreteEvent> Default for DiscreteEvents<E> {
 }
 
 impl<E: DiscreteEvent> DiscreteEvents<E> {
-    fn next_time(&self) -> Option<E::Time> {
+    fn next_time(&self) -> Option<SimTime> {
         self.queue.keys().next().copied()
     }
 
-    pub fn at(&mut self, now: E::Time) -> Vec<E> {
+    pub fn at(&mut self, now: SimTime) -> Vec<E> {
         let mut events = Vec::new();
         while let Some((&time, _)) = self.queue.first_key_value() {
             if time > now {
@@ -46,7 +44,7 @@ impl<E: DiscreteEvent> DiscreteEvents<E> {
 
 pub fn update_clock<E: DiscreteEvent>(
     events: Res<DiscreteEvents<E>>,
-    mut clock: ResMut<ComputeClock<E::Time>>,
+    mut clock: ResMut<ComputeClock>,
 ) {
     if let Some(time) = events.next_time() {
         clock.add(time);
@@ -56,7 +54,7 @@ pub fn update_clock<E: DiscreteEvent>(
 #[derive(SystemParam)]
 pub struct DiscreteEventReader<'w, E: DiscreteEvent> {
     events: ResMut<'w, DiscreteEvents<E>>,
-    clock: Res<'w, ComputeClock<<E as DiscreteEvent>::Time>>,
+    clock: Res<'w, ComputeClock>,
 }
 
 impl<E: DiscreteEvent> DiscreteEventReader<'_, E> {
@@ -82,21 +80,13 @@ impl<E: DiscreteEvent> DiscreteEventWriter<'_, E> {
 }
 
 pub trait RegisterDiscreteEvent {
-    fn register_discrete_event<E: DiscreteEvent>(&mut self) -> &mut Self
-    where
-        E::Time: Default;
+    fn register_discrete_event<E: DiscreteEvent>(&mut self) -> &mut Self;
 }
 
 impl RegisterDiscreteEvent for App {
-    fn register_discrete_event<E: DiscreteEvent>(&mut self) -> &mut Self
-    where
-        E::Time: Default,
-    {
-        self.add_compute_clock::<E::Time>()
+    fn register_discrete_event<E: DiscreteEvent>(&mut self) -> &mut Self {
+        self.add_compute_clock()
             .init_resource::<DiscreteEvents<E>>()
-            .add_systems(
-                ComputeTimeStep,
-                update_clock::<E>.before(advance_clock::<E::Time>),
-            )
+            .add_systems(ComputeTimeStep, update_clock::<E>.before(advance_clock))
     }
 }

@@ -1,7 +1,5 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
-use std::fmt::Debug;
-use std::hash::Hash;
 
 use bevy::app::MainScheduleOrder;
 use bevy::ecs::schedule::ScheduleLabel;
@@ -29,8 +27,8 @@ pub struct ComputeTimeStep;
 
 /// A marker struct indicating the result of the computed simulation at a given time.
 #[derive(Component)]
-pub struct ComputeResultMarker<T: SimTime> {
-    pub time: T,
+pub struct ComputeResultMarker {
+    pub time: SimTime,
 }
 
 pub struct ComputeResult<T: Component> {
@@ -47,20 +45,20 @@ pub enum ComputeState {
 
 /// A Clock to step through a series of discrete time steps when computing the simulation.
 #[derive(Resource, Default)]
-pub struct ComputeClock<T: Send + Sync + 'static> {
-    current: T,
-    pending_times_heap: BinaryHeap<Reverse<T>>,
-    pending_times_set: HashSet<T>,
+pub struct ComputeClock {
+    current: SimTime,
+    pending_times_heap: BinaryHeap<Reverse<SimTime>>,
+    pending_times_set: HashSet<SimTime>,
 }
 
-impl<T: SimTime> ComputeClock<T> {
+impl ComputeClock {
     /// The current time.
-    pub fn now(&self) -> T {
+    pub fn now(&self) -> SimTime {
         self.current
     }
 
     /// Add a time that should be processed.
-    pub fn add(&mut self, time: T) {
+    pub fn add(&mut self, time: SimTime) {
         if time <= self.current {
             panic!(
                 "Tried to add time {time:?} that is not greater than the current time {:?}.",
@@ -78,7 +76,7 @@ impl<T: SimTime> ComputeClock<T> {
     }
 
     /// Advance the clock to the next time step, and return the new time step if one exists.
-    pub fn next(&mut self) -> Option<T> {
+    pub fn next(&mut self) -> Option<SimTime> {
         if self.at_end() {
             return None;
         }
@@ -90,9 +88,9 @@ impl<T: SimTime> ComputeClock<T> {
     }
 }
 
-pub fn advance_clock<T: SimTime>(
+pub fn advance_clock(
     mut commands: Commands,
-    mut clock: ResMut<ComputeClock<T>>,
+    mut clock: ResMut<ComputeClock>,
     mut next_state: ResMut<NextState<ComputeState>>,
 ) {
     if clock.at_end() {
@@ -106,29 +104,29 @@ pub fn advance_clock<T: SimTime>(
 }
 
 pub trait AddComputeClock {
-    fn add_compute_clock<T: Default + SimTime>(&mut self) -> &mut Self;
+    fn add_compute_clock(&mut self) -> &mut Self;
 }
 
 impl AddComputeClock for App {
-    fn add_compute_clock<T: Default + SimTime>(&mut self) -> &mut Self {
-        if self.world().contains_resource::<ComputeClock<T>>() {
+    fn add_compute_clock(&mut self) -> &mut Self {
+        if self.world().contains_resource::<ComputeClock>() {
             return self;
         }
 
-        self.init_resource::<ComputeClock<T>>().add_systems(
+        self.init_resource::<ComputeClock>().add_systems(
             ComputeTimeStep,
-            advance_clock::<T>.run_if(in_state(ComputeState::Computing)),
+            advance_clock.run_if(in_state(ComputeState::Computing)),
         )
     }
 }
 
 /// Stores the [`ComputeResult`] for each computed time step.
 #[derive(Resource)]
-pub struct ComputeResults<Time: SimTime, T: Component> {
-    pub results: HashMap<Time, ComputeResult<T>>,
+pub struct ComputeResults<T: Component> {
+    pub results: HashMap<SimTime, ComputeResult<T>>,
 }
 
-impl<Time: SimTime, T: Component> Default for ComputeResults<Time, T> {
+impl<T: Component> Default for ComputeResults<T> {
     fn default() -> Self {
         Self {
             results: HashMap::new(),
@@ -136,10 +134,10 @@ impl<Time: SimTime, T: Component> Default for ComputeResults<Time, T> {
     }
 }
 
-pub fn update_compute_result<T: SimTime, C: Component + Clone>(
-    clock: Res<ComputeClock<T>>,
+pub fn update_compute_result<C: Component + Clone>(
+    clock: Res<ComputeClock>,
     changed: Query<(Entity, &C), Changed<C>>,
-    mut results: ResMut<ComputeResults<T, C>>,
+    mut results: ResMut<ComputeResults<C>>,
 ) {
     let now = clock.now();
     let result = results.results.entry(now).or_insert_with(|| ComputeResult {

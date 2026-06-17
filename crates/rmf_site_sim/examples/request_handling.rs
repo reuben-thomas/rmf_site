@@ -1,14 +1,16 @@
+use bevy::app::ScheduleRunnerPlugin;
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use rmf_site_sim::*;
 use std::fmt::Debug;
+use std::time::Duration;
 
 fn main() {
     let mut app = App::new();
-    app.add_plugins(MinimalPlugins)
+    app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin::run_once()))
         .add_plugins(LogPlugin::default())
         .add_plugins(SimulationPlugin)
-        .add_systems(Startup, spawn_entities);
+        .add_systems(Startup, (spawn_entities, start_simulation));
 
     // client_generate --[ClientRequest]--> load_balancer --[Request]--> server --[Response]--> client_collect
     let simulation_set = SimulationSetBuilder::new(app.world_mut())
@@ -22,6 +24,10 @@ fn main() {
     app.world_mut().spawn(simulation_set);
 
     app.run();
+}
+
+fn start_simulation(mut writer: EventWriter<ComputeSimulation>) {
+    writer.write(ComputeSimulation);
 }
 
 #[derive(Component)]
@@ -41,7 +47,7 @@ struct ClientRequest {
     request: String,
     source: Entity,
     target: Entity,
-    time: u32,
+    time: SimTime,
 }
 
 #[derive(Event)]
@@ -49,7 +55,7 @@ struct Request {
     request: String,
     source: Entity,
     target: Entity,
-    time: u32,
+    time: SimTime,
 }
 
 #[derive(Event)]
@@ -57,16 +63,14 @@ struct Response {
     response: String,
     source: Entity,
     target: Entity,
-    time: u32,
+    time: SimTime,
 }
 
 /// TODO: Remove after implementing macro
 macro_rules! discrete_event {
     ($ty:ty) => {
         impl DiscreteEvent for $ty {
-            type Time = u32;
-
-            fn time(&self) -> u32 {
+            fn time(&self) -> SimTime {
                 self.time
             }
             fn event_source(&self) -> Entity {
@@ -105,7 +109,7 @@ fn client_generate(
                 request: format!("request-{i}/{concurrent_requests}"),
                 source: client,
                 target: load_balancer,
-                time,
+                time: SimTime::new(Duration::from_secs(time)),
             });
         }
     }
@@ -125,7 +129,7 @@ fn load_balancer(
         let server = servers[server_idx];
 
         info!(
-            "t={}: routed {:?} -> server #{server_idx} ({server})",
+            "t={:?}: routed {:?} -> server #{server_idx} ({server})",
             req.time, req.request
         );
 
@@ -136,7 +140,7 @@ fn load_balancer(
             request: req.request,
             source: req.target,
             target: server,
-            time: req.time + 1,
+            time: SimTime::new(req.time.elapsed() + Duration::from_secs(1)),
         });
     }
 }
@@ -148,7 +152,7 @@ fn server(
 ) {
     for req in requests.read() {
         info!(
-            "t={}: server {} handling {:?}",
+            "t={:?}: server {} handling {:?}",
             req.time, req.target, req.request
         );
 
@@ -159,7 +163,7 @@ fn server(
             response: format!("echo from server: {}", req.request),
             source: req.target,
             target: req.source,
-            time: req.time + 1,
+            time: SimTime::new(req.time.elapsed() + Duration::from_secs(1)),
         });
     }
 }
@@ -171,7 +175,7 @@ fn client_collect(
     let mut count = count.single_mut().unwrap();
     for res in responses.read() {
         info!(
-            "t={}: collected {:?} from server {}",
+            "t={:?}: collected {:?} from server {}",
             res.time, res.response, res.source
         );
         count.0 += 1;
