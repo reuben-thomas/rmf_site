@@ -13,6 +13,10 @@ autoexamples = false
 name = "request_handling"
 path = "examples/request_handling.rs"
 
+[[bin]]
+name = "producer_consumer"
+path = "examples/producer_consumer.rs"
+
 [dependencies]
 bevy = {workspace = true, features = ["dynamic_linking"]}
 

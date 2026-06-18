@@ -5,18 +5,17 @@ use std::collections::BTreeMap;
 use crate::SimTime;
 use crate::compute::{AddComputeClock, ComputeClock, ComputeTimeStep, advance_clock};
 
-pub trait DiscreteEvent: Event {
-    fn time(&self) -> SimTime;
-    fn event_source(&self) -> Entity;
-    fn event_target(&self) -> Entity;
+pub struct DiscreteEvent<T: Event> {
+    pub time: SimTime,
+    pub event: T,
 }
 
 #[derive(Resource)]
-pub struct DiscreteEvents<E: DiscreteEvent> {
-    queue: BTreeMap<SimTime, Vec<E>>,
+pub struct DiscreteEvents<T: Event> {
+    queue: BTreeMap<SimTime, Vec<T>>,
 }
 
-impl<E: DiscreteEvent> Default for DiscreteEvents<E> {
+impl<T: Event> Default for DiscreteEvents<T> {
     fn default() -> Self {
         Self {
             queue: BTreeMap::new(),
@@ -24,69 +23,66 @@ impl<E: DiscreteEvent> Default for DiscreteEvents<E> {
     }
 }
 
-impl<E: DiscreteEvent> DiscreteEvents<E> {
+impl<T: Event> DiscreteEvents<T> {
     fn next_time(&self) -> Option<SimTime> {
         self.queue.keys().next().copied()
     }
 
-    pub fn at(&mut self, now: SimTime) -> Vec<E> {
+    pub fn at(&mut self, now: SimTime) -> Vec<DiscreteEvent<T>> {
         let mut events = Vec::new();
         while let Some((&time, _)) = self.queue.first_key_value() {
             if time > now {
                 break;
             }
-            let (_, batch) = self.queue.pop_first().unwrap();
-            events.extend(batch);
+            let (time, batch) = self.queue.pop_first().unwrap();
+            events.extend(batch.into_iter().map(|event| DiscreteEvent { time, event }));
         }
         events
     }
 }
 
-pub fn update_clock<E: DiscreteEvent>(
-    events: Res<DiscreteEvents<E>>,
-    mut clock: ResMut<ComputeClock>,
-) {
+pub fn update_clock<T: Event>(events: Res<DiscreteEvents<T>>, mut clock: ResMut<ComputeClock>) {
     if let Some(time) = events.next_time() {
         clock.add(time);
     }
 }
 
 #[derive(SystemParam)]
-pub struct DiscreteEventReader<'w, E: DiscreteEvent> {
-    events: ResMut<'w, DiscreteEvents<E>>,
+pub struct DiscreteEventReader<'w, T: Event> {
+    events: ResMut<'w, DiscreteEvents<T>>,
     clock: Res<'w, ComputeClock>,
 }
 
-impl<E: DiscreteEvent> DiscreteEventReader<'_, E> {
-    pub fn read(&mut self) -> Vec<E> {
+impl<T: Event> DiscreteEventReader<'_, T> {
+    pub fn read(&mut self) -> Vec<DiscreteEvent<T>> {
         let now = self.clock.now();
         self.events.at(now)
     }
 }
 
 #[derive(SystemParam)]
-pub struct DiscreteEventWriter<'w, E: DiscreteEvent> {
-    events: ResMut<'w, DiscreteEvents<E>>,
+pub struct DiscreteEventWriter<'w, T: Event> {
+    events: ResMut<'w, DiscreteEvents<T>>,
 }
 
-impl<E: DiscreteEvent> DiscreteEventWriter<'_, E> {
-    pub fn write(&mut self, event: E) {
+impl<T: Event> DiscreteEventWriter<'_, T> {
+    pub fn write(&mut self, event: DiscreteEvent<T>) {
         self.events
             .queue
-            .entry(event.time())
+            .entry(event.time)
             .or_default()
-            .push(event);
+            .push(event.event);
     }
 }
 
 pub trait RegisterDiscreteEvent {
-    fn register_discrete_event<E: DiscreteEvent>(&mut self) -> &mut Self;
+    fn register_discrete_event<T: Event>(&mut self) -> &mut Self;
 }
 
 impl RegisterDiscreteEvent for App {
-    fn register_discrete_event<E: DiscreteEvent>(&mut self) -> &mut Self {
+    fn register_discrete_event<T: Event>(&mut self) -> &mut Self {
         self.add_compute_clock()
-            .init_resource::<DiscreteEvents<E>>()
-            .add_systems(ComputeTimeStep, update_clock::<E>.before(advance_clock))
+            .init_resource::<DiscreteEvents<T>>()
+            .add_systems(ComputeTimeStep, update_clock::<T>.before(advance_clock))
     }
 }
