@@ -1,0 +1,12 @@
+[package]
+name = "rmf_site_sim"
+version = "0.0.1"
+edition = "2024"
+authors = ["Grey <mxgrey@intrinsic.ai>"]
+description = "Discrete event simulation for rmf_site_editor"
+license = "Apache-2.0"
+repository = "https://github.com/open-rmf/rmf_site"
+readme = "README.md"
+
+[dependencies]
+bevy = {workspace = true, features = ["dynamic_linking"]}
