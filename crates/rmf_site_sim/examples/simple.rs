@@ -1,8 +1,7 @@
 use bevy::{app::ScheduleRunnerPlugin, log::LogPlugin, prelude::*};
 use crossbeam_channel::TryRecvError;
 use rmf_site_sim::{
-    CreateSimulation, PlaybackUpdate, Simulation, SimulationPlugin, SimulationSet,
-    time::SimulationTime,
+    PlaybackUpdate, Simulation, SimulationPlugin, SimulationSet, time::SimulationTime,
 };
 use std::time::Duration;
 
@@ -15,7 +14,7 @@ fn main() {
             LogPlugin::default(),
             SimulationPlugin,
         ))
-        .add_systems(Startup, setup_and_start_compute_simulation)
+        .add_systems(Startup, setup)
         .add_systems(Update, poll_updates)
         .run();
 }
@@ -44,23 +43,22 @@ fn poll_updates(mut commands: Commands, simulations: Query<(Entity, &Simulation)
     }
 }
 
-fn setup_and_start_compute_simulation(
-    mut commands: Commands,
-    mut compute: EventWriter<CreateSimulation>,
-) {
-    let primary = commands.spawn(SimulationSet).id();
-    compute.write(CreateSimulation {
-        name: "Primary 0..10".to_string(),
-        set: primary,
-        start_time: SimulationTime::new(Duration::ZERO),
-        end_time: SimulationTime::new(Duration::from_secs(10)),
-    });
+fn setup(mut commands: Commands) {
+    let simulation_set = SimulationSet;
 
-    let secondary = commands.spawn(SimulationSet).id();
-    compute.write(CreateSimulation {
-        name: "Secondary 5..15".to_string(),
-        set: secondary,
-        start_time: SimulationTime::new(Duration::from_secs(5)),
-        end_time: SimulationTime::new(Duration::from_secs(15)),
-    });
+    let primary = commands.spawn(simulation_set).id();
+    commands.spawn(simulation_set.build_simulation(
+        "Primary 0..10".to_string(),
+        primary,
+        SimulationTime::new(Duration::ZERO),
+        SimulationTime::new(Duration::from_secs(10)),
+    ));
+
+    let secondary = commands.spawn(simulation_set).id();
+    commands.spawn(simulation_set.build_simulation(
+        "Secondary 5..15".to_string(),
+        secondary,
+        SimulationTime::new(Duration::from_secs(5)),
+        SimulationTime::new(Duration::from_secs(15)),
+    ));
 }

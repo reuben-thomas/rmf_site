@@ -7,10 +7,7 @@ use std::time::Duration;
 pub struct SimulationPlugin;
 
 impl Plugin for SimulationPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_event::<CreateSimulation>()
-            .add_systems(Update, create_simulation);
-    }
+    fn build(&self, _app: &mut App) {}
 }
 
 /// A set of entities, components, systems, and resources in a [`World`] that can be used to compute a simulation.
@@ -18,50 +15,27 @@ impl Plugin for SimulationPlugin {
 pub struct SimulationSet;
 
 impl SimulationSet {
-    /// Registers a new component that will be syncrhonized between the simulation and the real world.
-    fn register_tracked_component<C: Component>(&mut self) {
-        todo!();
-    }
-}
-
-/// An event requesting the creation of a [`Simulation`] for a specific [`SimulationSet`].
-#[derive(Event, Debug, Clone)]
-pub struct CreateSimulation {
-    pub name: String,
-    pub set: Entity,
-    pub start_time: SimulationTime,
-    pub end_time: SimulationTime,
-}
-
-// TODO:
-// - Should this system, and the corresponding event be a part of the SimulationSet instead?
-fn create_simulation(
-    mut commands: Commands,
-    mut events: EventReader<CreateSimulation>,
-    main_world_: &World,
-) {
-    for event in events.read() {
-        let CreateSimulation {
-            name,
-            set,
-            start_time,
-            end_time,
-        } = event;
-
+    /// Create a [`Simulation`] from this set.
+    pub fn build_simulation(
+        &self,
+        name: String,
+        set: Entity,
+        start_time: SimulationTime,
+        end_time: SimulationTime,
+    ) -> Simulation {
         let (sender, receiver) = unbounded();
-        let (start_time, end_time) = (*start_time, *end_time);
         AsyncComputeTaskPool::get()
             .spawn(async move {
                 Simulation::run(sender, start_time, end_time);
             })
             .detach();
 
-        commands.spawn(Simulation {
-            name: name.clone(),
-            set: *set,
+        Simulation {
+            name,
+            set,
             world: World::new(),
             playback: receiver,
-        });
+        }
     }
 }
 
