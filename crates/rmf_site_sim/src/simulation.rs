@@ -17,6 +17,14 @@ impl Plugin for SimulationPlugin {
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct SimulationSet;
 
+impl SimulationSet {
+    /// Registers a new component that will be syncrhonized between the simulation and the real world.
+    fn register_tracked_component<C: Component>(&mut self) {
+        todo!();
+    }
+}
+
+/// An event requesting the creation of a [`Simulation`] for a specific [`SimulationSet`].
 #[derive(Event, Debug, Clone)]
 pub struct CreateSimulation {
     pub name: String,
@@ -25,7 +33,9 @@ pub struct CreateSimulation {
     pub end_time: SimulationTime,
 }
 
-pub fn create_simulation(
+// TODO:
+// - Should this system, and the corresponding event be a part of the SimulationSet instead?
+fn create_simulation(
     mut commands: Commands,
     mut events: EventReader<CreateSimulation>,
     main_world_: &World,
@@ -55,6 +65,9 @@ pub fn create_simulation(
     }
 }
 
+/// A unique simulation created from a [`SimulationSet`].
+// TODO:
+// - Should this store information about what was computed?
 #[derive(Component)]
 pub struct Simulation {
     pub name: String,

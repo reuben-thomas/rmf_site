@@ -15,9 +15,8 @@
  *
 */
 
-pub mod extract_component;
 pub mod simulation;
-pub mod sync_world;
+pub mod sync;
 pub mod time;
 
 pub use simulation::*;
