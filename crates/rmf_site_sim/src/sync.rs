@@ -1,8 +1,13 @@
 use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;
 
+fn sync_to_sim(main_world: &mut World, sim_world: &mut World) {
+    todo!();
+}
+
 /// Maps entities between a simulation and main ['World'].
 #[derive(Default)]
+#[allow(dead_code)]
 struct EntityMap {
     main_to_sim: EntityHashMap<Entity>,
     sim_to_main: EntityHashMap<Entity>,

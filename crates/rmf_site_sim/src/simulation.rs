@@ -1,81 +1,100 @@
 use crate::time::SimulationTime;
 use bevy::{prelude::*, tasks::AsyncComputeTaskPool};
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
 
 /// Plugin for running discrete event simulations.
 pub struct SimulationPlugin;
 
 impl Plugin for SimulationPlugin {
-    fn build(&self, _app: &mut App) {}
+    fn build(&self, app: &mut App) {
+        app.add_plugins(bevy::app::TaskPoolPlugin::default());
+    }
 }
 
-/// A set of entities, components, systems, and resources in a [`World`] that can be used to compute a simulation.
+/// A set of entities, components, systems, and resources from which a Simulation can be run.
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct SimulationSet;
 
 impl SimulationSet {
-    /// Create a [`Simulation`] from this set.
-    pub fn build_simulation(
+    pub fn run(
         &self,
         name: String,
         set: Entity,
-        start_time: SimulationTime,
-        end_time: SimulationTime,
+        end_condition: EndCondition,
+        schedule: Schedule,
     ) -> Simulation {
-        let (sender, receiver) = unbounded();
-        AsyncComputeTaskPool::get()
-            .spawn(async move {
-                Simulation::run(sender, start_time, end_time);
-            })
-            .detach();
-
-        Simulation {
-            name,
-            set,
-            world: World::new(),
-            playback: receiver,
-        }
-    }
-}
-
-/// A unique simulation created from a [`SimulationSet`].
-// TODO:
-// - Should this store information about what was computed?
-#[derive(Component)]
-pub struct Simulation {
-    pub name: String,
-    pub set: Entity,
-    pub world: World,
-    pub playback: Receiver<PlaybackUpdate>,
-}
-
-// TODO:
-// - Should Simulation be a child of SimulationSet?
-impl Simulation {
-    fn run(sender: Sender<PlaybackUpdate>, start_time: SimulationTime, end_time: SimulationTime) {
-        // Temporary implementation
-        let mut time = start_time;
-        while time < end_time {
-            std::thread::sleep(Self::get_random_sleep_duration());
-            if sender.send(PlaybackUpdate::SomeUpdate(time)).is_err() {
-                return;
-            }
-            time = SimulationTime::new(time.elapsed() + Duration::from_secs(1));
-        }
-    }
-
-    // TODO: Temporary implementation to remove
-    fn get_random_sleep_duration() -> Duration {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.subsec_nanos())
-            .unwrap_or(0);
-        Duration::from_millis((nanos % 20) as u64)
+        Simulation::new(name, set, end_condition, schedule)
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum PlaybackUpdate {
-    SomeUpdate(SimulationTime),
+pub enum EndCondition {
+    Time(SimulationTime),
 }
+
+/// A reference object for a [`SimulationRun`] executed in a separate thread.
+#[derive(Component)]
+pub struct Simulation {
+    pub name: String,
+    pub set: Entity,
+    pub end_condition: EndCondition,
+    run: Arc<Mutex<SimulationRun>>,
+    pub update_receiver: Receiver<StateUpdate>,
+}
+
+impl Simulation {
+    pub fn new(name: String, set: Entity, end_condition: EndCondition, schedule: Schedule) -> Self {
+        let (update_sender, update_receiver) = unbounded::<StateUpdate>();
+        let run = Arc::new(Mutex::new(SimulationRun::new(
+            end_condition.clone(),
+            schedule,
+            update_sender,
+        )));
+        let run_task = run.clone();
+        AsyncComputeTaskPool::get()
+            .spawn(async move {
+                info!("Running simulation");
+                run_task.lock().unwrap().run();
+            })
+            .detach();
+        Simulation {
+            name,
+            set,
+            end_condition,
+            run,
+            update_receiver,
+        }
+    }
+}
+
+/// A running simulation in a separate thread.
+pub struct SimulationRun {
+    world: World,
+    pub end_condition: EndCondition,
+    schedule: Schedule,
+    update_sender: Sender<StateUpdate>,
+}
+
+impl SimulationRun {
+    pub fn new(
+        end_condition: EndCondition,
+        schedule: Schedule,
+        update_sender: Sender<StateUpdate>,
+    ) -> Self {
+        SimulationRun {
+            world: World::new(),
+            end_condition: end_condition,
+            schedule,
+            update_sender,
+        }
+    }
+
+    pub fn run(&mut self) {
+        self.schedule.run(&mut self.world);
+    }
+}
+
+// TODO: A placeholder implementation
+#[derive(Debug, Clone)]
+pub struct StateUpdate(SimulationTime);
