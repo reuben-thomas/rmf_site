@@ -1,6 +1,6 @@
+use crate::schedule::{ScheduleInitializer, SimulationScheduleConfigs};
 use crate::sync::EntityCloner;
 use crate::time::SimulationTime;
-use bevy::ecs::system::ScheduleSystem;
 use bevy::{prelude::*, tasks::AsyncComputeTaskPool};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
@@ -14,23 +14,19 @@ impl Plugin for SimulationPlugin {
 }
 
 /// A set of entities, components, systems, and resources from which a Simulation can be run.
-#[derive(Component)]
-pub struct SimulationBuilder {
-    startup_schedule: Schedule,
-    compute_schedule: Schedule,
+#[derive(Component, Clone, Default)]
+pub struct SimulationGroup {
+    startup_system_initializers: Vec<ScheduleInitializer>,
+    compute_system_initializers: Vec<ScheduleInitializer>,
 }
 
-impl SimulationBuilder {
-    // WARN: If these default labels are mistakenly on the main world, they will override the existing schedules.
+impl SimulationGroup {
     pub fn new() -> Self {
-        Self {
-            startup_schedule: Schedule::new(Startup),
-            compute_schedule: Schedule::new(Update),
-        }
+        Self::default()
     }
 
-    pub fn build(
-        self,
+    pub fn create_simulation(
+        &self,
         name: String,
         set: Entity,
         end_condition: EndCondition,
@@ -40,11 +36,22 @@ impl SimulationBuilder {
         let (update_sender, update_receiver) = unbounded::<StateUpdate>();
         let mut sim_world = World::new();
         entity_cloner.clone_to_sim(main_world, &mut sim_world);
+
+        // WARN: If these default labels are mistakenly on the main world, they will override the existing schedules.
+        let mut startup_schedule = Schedule::new(Startup);
+        for init in &self.startup_system_initializers {
+            init.initialize(&mut startup_schedule);
+        }
+        let mut compute_schedule = Schedule::new(Update);
+        for init in &self.compute_system_initializers {
+            init.initialize(&mut compute_schedule);
+        }
+
         let mut sim_run = SimulationRun::new(
             sim_world,
             end_condition.clone(),
-            self.startup_schedule,
-            self.compute_schedule,
+            startup_schedule,
+            compute_schedule,
             update_sender,
         );
         AsyncComputeTaskPool::get()
@@ -58,19 +65,15 @@ impl SimulationBuilder {
         }
     }
 
-    pub fn add_startup_systems<M>(
-        mut self,
-        systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
-    ) -> Self {
-        self.startup_schedule.add_systems(systems);
+    pub fn add_startup_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
+        self.startup_system_initializers
+            .push(ScheduleInitializer::new(systems));
         self
     }
 
-    pub fn add_compute_systems<M>(
-        mut self,
-        systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
-    ) -> Self {
-        self.compute_schedule.add_systems(systems);
+    pub fn add_compute_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
+        self.compute_system_initializers
+            .push(ScheduleInitializer::new(systems));
         self
     }
 }

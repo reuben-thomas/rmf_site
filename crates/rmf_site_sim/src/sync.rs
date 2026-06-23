@@ -10,7 +10,7 @@ pub struct EntityCloner {
 }
 
 impl EntityCloner {
-    pub fn register<T: Component + Clone + 'static>(&mut self) {
+    pub fn register<T: Component + Clone>(&mut self) {
         self.cloners.push(Box::new(ComponentCloner::<T>::default()));
     }
 

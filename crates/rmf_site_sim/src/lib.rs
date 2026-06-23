@@ -15,6 +15,7 @@
  *
 */
 
+pub mod schedule;
 pub mod simulation;
 pub mod sync;
 pub mod time;
