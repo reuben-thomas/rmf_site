@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use rmf_site_sim::{
-    EndCondition, SimulationBuilder, SimulationPlugin, sync::EntityCloner, time::SimulationTime,
+    EndCondition, SimulationGroup, SimulationPlugin, sync::EntityCloner, time::SimulationTime,
 };
 use std::time::Duration;
 
@@ -41,18 +41,26 @@ fn setup(world: &mut World) {
     let mut entity_cloner = EntityCloner::default();
     entity_cloner.register::<TurtleBot>();
 
-    let set = SimulationBuilder::new()
+    let set = SimulationGroup::new()
         .add_startup_systems(sim_startup)
         .add_compute_systems(sim_update);
     let set_entity = world.spawn_empty().id();
 
-    // Robots are spawned by the sim_startup system inside the sim world.
-    let simulation = set.build(
+    let primary = set.create_simulation(
         "Primary 0..10".to_string(),
         set_entity,
         EndCondition::Time(SimulationTime::new(Duration::from_secs(10))),
         &mut entity_cloner,
         world,
     );
-    world.spawn(simulation);
+    world.spawn(primary);
+
+    let secondary = set.create_simulation(
+        "Secondary 0..20".to_string(),
+        set_entity,
+        EndCondition::Time(SimulationTime::new(Duration::from_secs(20))),
+        &mut entity_cloner,
+        world,
+    );
+    world.spawn(secondary);
 }
