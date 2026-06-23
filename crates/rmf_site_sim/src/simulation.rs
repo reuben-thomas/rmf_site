@@ -1,7 +1,8 @@
+use crate::sync::EntityCloner;
 use crate::time::SimulationTime;
+use bevy::ecs::system::ScheduleSystem;
 use bevy::{prelude::*, tasks::AsyncComputeTaskPool};
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use std::sync::{Arc, Mutex};
 
 /// Plugin for running discrete event simulations.
 pub struct SimulationPlugin;
@@ -13,21 +14,69 @@ impl Plugin for SimulationPlugin {
 }
 
 /// A set of entities, components, systems, and resources from which a Simulation can be run.
-#[derive(Component, Debug, Clone, Copy, Default)]
-pub struct SimulationSet;
+#[derive(Component)]
+pub struct SimulationBuilder {
+    startup_schedule: Schedule,
+    compute_schedule: Schedule,
+}
 
-impl SimulationSet {
-    pub fn run(
-        &self,
+impl SimulationBuilder {
+    // WARN: If these default labels are mistakenly on the main world, they will override the existing schedules.
+    pub fn new() -> Self {
+        Self {
+            startup_schedule: Schedule::new(Startup),
+            compute_schedule: Schedule::new(Update),
+        }
+    }
+
+    pub fn build(
+        self,
         name: String,
         set: Entity,
         end_condition: EndCondition,
-        schedule: Schedule,
+        entity_cloner: &mut EntityCloner,
+        main_world: &World,
     ) -> Simulation {
-        Simulation::new(name, set, end_condition, schedule)
+        let (update_sender, update_receiver) = unbounded::<StateUpdate>();
+        let mut sim_world = World::new();
+        entity_cloner.clone_to_sim(main_world, &mut sim_world);
+        let mut sim_run = SimulationRun::new(
+            sim_world,
+            end_condition.clone(),
+            self.startup_schedule,
+            self.compute_schedule,
+            update_sender,
+        );
+        AsyncComputeTaskPool::get()
+            .spawn(async move { sim_run.run() })
+            .detach();
+        Simulation {
+            name,
+            set,
+            end_condition,
+            update_receiver,
+        }
+    }
+
+    pub fn add_startup_systems<M>(
+        mut self,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
+    ) -> Self {
+        self.startup_schedule.add_systems(systems);
+        self
+    }
+
+    pub fn add_compute_systems<M>(
+        mut self,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
+    ) -> Self {
+        self.compute_schedule.add_systems(systems);
+        self
     }
 }
 
+/// A condition that determines when the simulation should end.
+// TODO: Make this a query, and then EndCondition::time can be a simple check on the clock resource.
 #[derive(Debug, Clone)]
 pub enum EndCondition {
     Time(SimulationTime),
@@ -39,59 +88,38 @@ pub struct Simulation {
     pub name: String,
     pub set: Entity,
     pub end_condition: EndCondition,
-    run: Arc<Mutex<SimulationRun>>,
     pub update_receiver: Receiver<StateUpdate>,
-}
-
-impl Simulation {
-    pub fn new(name: String, set: Entity, end_condition: EndCondition, schedule: Schedule) -> Self {
-        let (update_sender, update_receiver) = unbounded::<StateUpdate>();
-        let run = Arc::new(Mutex::new(SimulationRun::new(
-            end_condition.clone(),
-            schedule,
-            update_sender,
-        )));
-        let run_task = run.clone();
-        AsyncComputeTaskPool::get()
-            .spawn(async move {
-                info!("Running simulation");
-                run_task.lock().unwrap().run();
-            })
-            .detach();
-        Simulation {
-            name,
-            set,
-            end_condition,
-            run,
-            update_receiver,
-        }
-    }
 }
 
 /// A running simulation in a separate thread.
 pub struct SimulationRun {
     world: World,
     pub end_condition: EndCondition,
-    schedule: Schedule,
+    startup_schedule: Schedule,
+    compute_schedule: Schedule,
     update_sender: Sender<StateUpdate>,
 }
 
 impl SimulationRun {
     pub fn new(
+        world: World,
         end_condition: EndCondition,
-        schedule: Schedule,
+        startup_schedule: Schedule,
+        compute_schedule: Schedule,
         update_sender: Sender<StateUpdate>,
     ) -> Self {
         SimulationRun {
-            world: World::new(),
-            end_condition: end_condition,
-            schedule,
+            world,
+            end_condition,
+            startup_schedule,
+            compute_schedule,
             update_sender,
         }
     }
 
     pub fn run(&mut self) {
-        self.schedule.run(&mut self.world);
+        self.startup_schedule.run(&mut self.world);
+        self.compute_schedule.run(&mut self.world);
     }
 }
 
