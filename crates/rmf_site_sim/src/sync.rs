@@ -108,7 +108,7 @@ fn insert_component<T: Component>(world: &mut World, entity: Entity, component: 
     }
 }
 
-trait ErasedComponentCloner {
+trait ErasedComponentCloner: Send + Sync + 'static {
     fn clone_to_sim(&self, entity_map: &mut EntityMap, main_world: &World, sim_world: &mut World);
     fn clone_to_main(&self, entity_map: &mut EntityMap, sim_world: &World, main_world: &mut World);
 }

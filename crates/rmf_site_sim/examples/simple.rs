@@ -1,7 +1,5 @@
 use bevy::prelude::*;
-use rmf_site_sim::{
-    EndCondition, SimulationGroup, SimulationPlugin, sync::EntityCloner, time::SimulationTime,
-};
+use rmf_site_sim::{SimulationBuilder, SimulationPlugin};
 use std::time::Duration;
 
 #[derive(Component, Clone, Debug)]
@@ -20,6 +18,17 @@ fn main() {
         .run();
 }
 
+fn setup(world: &mut World) {
+    let builder = SimulationBuilder::new()
+        .register_component::<TurtleBot>()
+        .add_startup_systems(sim_startup)
+        .add_compute_systems(sim_update);
+
+    let mut primary = builder.build();
+    primary.sync_from_world(world);
+    primary.run_async();
+}
+
 fn sim_startup(mut commands: Commands) {
     info!("startup - Spawning robots...");
     commands.spawn(TurtleBot {
@@ -31,36 +40,7 @@ fn sim_startup(mut commands: Commands) {
 }
 
 fn sim_update(query: Query<(Entity, &TurtleBot)>) {
-    info!(
-        "compute - Found {} robots in the simulation.",
-        query.iter().count()
-    );
-}
-
-fn setup(world: &mut World) {
-    let mut entity_cloner = EntityCloner::default();
-    entity_cloner.register::<TurtleBot>();
-
-    let set = SimulationGroup::new()
-        .add_startup_systems(sim_startup)
-        .add_compute_systems(sim_update);
-    let set_entity = world.spawn_empty().id();
-
-    let primary = set.create_simulation(
-        "Primary 0..10".to_string(),
-        set_entity,
-        EndCondition::Time(SimulationTime::new(Duration::from_secs(10))),
-        &mut entity_cloner,
-        world,
-    );
-    world.spawn(primary);
-
-    let secondary = set.create_simulation(
-        "Secondary 0..20".to_string(),
-        set_entity,
-        EndCondition::Time(SimulationTime::new(Duration::from_secs(20))),
-        &mut entity_cloner,
-        world,
-    );
-    world.spawn(secondary);
+    for (_, bot) in query.iter() {
+        info!("compute - Found TurtleBot: {}", bot.name);
+    }
 }
