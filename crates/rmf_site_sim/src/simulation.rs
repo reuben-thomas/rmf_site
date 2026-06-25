@@ -1,10 +1,11 @@
-use crate::schedule::{ScheduleInitializer, SimulationScheduleConfigs};
+use crate::schedule::{
+    ScheduleInitializer, SimulationComputeStep, SimulationScheduleConfigs, SimulationStartup,
+};
 use crate::sync::EntityCloner;
-use crate::time::SimulationTime;
 use bevy::{prelude::*, tasks::AsyncComputeTaskPool};
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use std::sync::{Arc, Mutex};
 
-/// Plugin for running discrete event simulations.
+/// Plugin for computing discrete event simulations.
 pub struct SimulationPlugin;
 
 impl Plugin for SimulationPlugin {
@@ -13,56 +14,22 @@ impl Plugin for SimulationPlugin {
     }
 }
 
-/// A set of entities, components, systems, and resources from which a Simulation can be run.
-#[derive(Component, Clone, Default)]
-pub struct SimulationGroup {
+/// Builds a [`Simulation`].
+#[derive(Component, Default)]
+pub struct SimulationBuilder {
+    entity_cloner: EntityCloner,
     startup_system_initializers: Vec<ScheduleInitializer>,
     compute_system_initializers: Vec<ScheduleInitializer>,
 }
 
-impl SimulationGroup {
+impl SimulationBuilder {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn create_simulation(
-        &self,
-        name: String,
-        set: Entity,
-        end_condition: EndCondition,
-        entity_cloner: &mut EntityCloner,
-        main_world: &World,
-    ) -> Simulation {
-        let (update_sender, update_receiver) = unbounded::<StateUpdate>();
-        let mut sim_world = World::new();
-        entity_cloner.clone_to_sim(main_world, &mut sim_world);
-
-        // WARN: If these default labels are mistakenly on the main world, they will override the existing schedules.
-        let mut startup_schedule = Schedule::new(Startup);
-        for init in &self.startup_system_initializers {
-            init.initialize(&mut startup_schedule);
-        }
-        let mut compute_schedule = Schedule::new(Update);
-        for init in &self.compute_system_initializers {
-            init.initialize(&mut compute_schedule);
-        }
-
-        let mut sim_run = SimulationRun::new(
-            sim_world,
-            end_condition.clone(),
-            startup_schedule,
-            compute_schedule,
-            update_sender,
-        );
-        AsyncComputeTaskPool::get()
-            .spawn(async move { sim_run.run() })
-            .detach();
-        Simulation {
-            name,
-            set,
-            end_condition,
-            update_receiver,
-        }
+    pub fn register_component<T: Component + Clone>(mut self) -> Self {
+        self.entity_cloner.register::<T>();
+        self
     }
 
     pub fn add_startup_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
@@ -76,56 +43,88 @@ impl SimulationGroup {
             .push(ScheduleInitializer::new(systems));
         self
     }
+
+    pub fn register_event<T: Event>(self) -> Self {
+        todo!()
+    }
+
+    pub fn build(self) -> Simulation {
+        Simulation {
+            entity_cloner: self.entity_cloner,
+            startup_system_initializers: self.startup_system_initializers,
+            compute_system_initializers: self.compute_system_initializers,
+            sim_world: Arc::new(Mutex::new(World::new())),
+            run: None,
+        }
+    }
 }
 
-/// A condition that determines when the simulation should end.
-// TODO: Make this a query, and then EndCondition::time can be a simple check on the clock resource.
-#[derive(Debug, Clone)]
-pub enum EndCondition {
-    Time(SimulationTime),
-}
-
-/// A reference object for a [`SimulationRun`] executed in a separate thread.
+/// A configured simulation, ready to sync and run.
 #[derive(Component)]
 pub struct Simulation {
-    pub name: String,
-    pub set: Entity,
-    pub end_condition: EndCondition,
-    pub update_receiver: Receiver<StateUpdate>,
+    entity_cloner: EntityCloner,
+    startup_system_initializers: Vec<ScheduleInitializer>,
+    compute_system_initializers: Vec<ScheduleInitializer>,
+    sim_world: Arc<Mutex<World>>,
+    run: Option<Arc<Mutex<SimulationRun>>>,
 }
 
-/// A running simulation in a separate thread.
-pub struct SimulationRun {
-    world: World,
-    pub end_condition: EndCondition,
+impl Simulation {
+    pub fn sync_from_world(&mut self, world: &World) {
+        let mut sim_world = self.sim_world.lock().unwrap();
+        self.entity_cloner.clone_to_sim(world, &mut sim_world);
+    }
+
+    pub fn sync_to_world(&mut self, world: &mut World) {
+        todo!();
+    }
+
+    pub fn run_async(&mut self) {
+        let mut startup_schedule = Schedule::new(SimulationStartup);
+        for init in &self.startup_system_initializers {
+            init.initialize(&mut startup_schedule);
+        }
+        let mut compute_schedule = Schedule::new(SimulationComputeStep);
+        for init in &self.compute_system_initializers {
+            init.initialize(&mut compute_schedule);
+        }
+
+        let sim_run = Arc::new(Mutex::new(SimulationRun::new(
+            Arc::clone(&self.sim_world),
+            startup_schedule,
+            compute_schedule,
+        )));
+        self.run = Some(Arc::clone(&sim_run));
+
+        AsyncComputeTaskPool::get()
+            .spawn(async move { sim_run.lock().unwrap().run() })
+            .detach();
+    }
+}
+
+/// A simulation run that is executed in a separate thread.
+struct SimulationRun {
+    world: Arc<Mutex<World>>,
     startup_schedule: Schedule,
     compute_schedule: Schedule,
-    update_sender: Sender<StateUpdate>,
 }
 
 impl SimulationRun {
-    pub fn new(
-        world: World,
-        end_condition: EndCondition,
+    fn new(
+        world: Arc<Mutex<World>>,
         startup_schedule: Schedule,
         compute_schedule: Schedule,
-        update_sender: Sender<StateUpdate>,
     ) -> Self {
         SimulationRun {
             world,
-            end_condition,
             startup_schedule,
             compute_schedule,
-            update_sender,
         }
     }
 
     pub fn run(&mut self) {
-        self.startup_schedule.run(&mut self.world);
-        self.compute_schedule.run(&mut self.world);
+        let mut world = self.world.lock().unwrap();
+        self.startup_schedule.run(&mut world);
+        self.compute_schedule.run(&mut world);
     }
 }
-
-// TODO: A placeholder implementation
-#[derive(Debug, Clone)]
-pub struct StateUpdate(SimulationTime);
