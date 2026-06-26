@@ -1,35 +1,46 @@
 use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;
-use std::marker::PhantomData;
 
 /// Clones all registered component types for all entities between two worlds.
-// TODO: Simplify implementation to use generic cloners without a blanket implementation
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct EntityCloner {
     entity_map: EntityMap,
-    cloners: Vec<Box<dyn ErasedComponentCloner>>,
+    cloners: Vec<ComponentCloner>,
 }
 
 impl EntityCloner {
     pub fn register<T: Component + Clone>(&mut self) {
-        self.cloners.push(Box::new(ComponentCloner::<T>::default()));
+        self.cloners.push(ComponentCloner {
+            clone_to_sim: |entity_map, main_world, sim_world| {
+                for (main_entity, component) in collect_components::<T>(main_world) {
+                    let sim_entity = entity_map.get_or_spawn_sim(main_entity, sim_world);
+                    insert_component(sim_world, sim_entity, component);
+                }
+            },
+            clone_to_main: |entity_map, sim_world, main_world| {
+                for (sim_entity, component) in collect_components::<T>(sim_world) {
+                    let main_entity = entity_map.get_or_spawn_main(sim_entity, main_world);
+                    insert_component(main_world, main_entity, component);
+                }
+            },
+        });
     }
 
     pub fn clone_to_sim(&mut self, main_world: &World, sim_world: &mut World) {
         for cloner in &self.cloners {
-            cloner.clone_to_sim(&mut self.entity_map, main_world, sim_world);
+            (cloner.clone_to_sim)(&mut self.entity_map, main_world, sim_world);
         }
     }
 
     pub fn clone_to_main(&mut self, sim_world: &World, main_world: &mut World) {
         for cloner in &self.cloners {
-            cloner.clone_to_main(&mut self.entity_map, sim_world, main_world);
+            (cloner.clone_to_main)(&mut self.entity_map, sim_world, main_world);
         }
     }
 }
 
 /// Maps entities between a simulation and main [`World`].
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct EntityMap {
     main_to_sim: EntityHashMap<Entity>,
     sim_to_main: EntityHashMap<Entity>,
@@ -58,42 +69,10 @@ impl EntityMap {
     }
 }
 
-pub struct ComponentCloner<T: Component + Clone> {
-    _marker: PhantomData<T>,
-}
-
-impl<T: Component + Clone> Default for ComponentCloner<T> {
-    fn default() -> Self {
-        Self {
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<T: Component + Clone> ComponentCloner<T> {
-    pub fn clone_to_sim(
-        &self,
-        entity_map: &mut EntityMap,
-        main_world: &World,
-        sim_world: &mut World,
-    ) {
-        for (main_entity, component) in collect_components::<T>(main_world) {
-            let sim_entity = entity_map.get_or_spawn_sim(main_entity, sim_world);
-            insert_component(sim_world, sim_entity, component);
-        }
-    }
-
-    pub fn clone_to_main(
-        &self,
-        entity_map: &mut EntityMap,
-        sim_world: &World,
-        main_world: &mut World,
-    ) {
-        for (sim_entity, component) in collect_components::<T>(sim_world) {
-            let main_entity = entity_map.get_or_spawn_main(sim_entity, main_world);
-            insert_component(main_world, main_entity, component);
-        }
-    }
+#[derive(Clone, Copy)]
+struct ComponentCloner {
+    clone_to_sim: fn(&mut EntityMap, &World, &mut World),
+    clone_to_main: fn(&mut EntityMap, &World, &mut World),
 }
 
 fn collect_components<T: Component + Clone>(world: &World) -> Vec<(Entity, T)> {
@@ -106,20 +85,5 @@ fn collect_components<T: Component + Clone>(world: &World) -> Vec<(Entity, T)> {
 fn insert_component<T: Component>(world: &mut World, entity: Entity, component: T) {
     if let Ok(mut e) = world.get_entity_mut(entity) {
         e.insert(component);
-    }
-}
-
-trait ErasedComponentCloner: Send + Sync + 'static {
-    fn clone_to_sim(&self, entity_map: &mut EntityMap, main_world: &World, sim_world: &mut World);
-    fn clone_to_main(&self, entity_map: &mut EntityMap, sim_world: &World, main_world: &mut World);
-}
-
-impl<T: Component + Clone> ErasedComponentCloner for ComponentCloner<T> {
-    fn clone_to_sim(&self, entity_map: &mut EntityMap, main_world: &World, sim_world: &mut World) {
-        self.clone_to_sim(entity_map, main_world, sim_world);
-    }
-
-    fn clone_to_main(&self, entity_map: &mut EntityMap, sim_world: &World, main_world: &mut World) {
-        self.clone_to_main(entity_map, sim_world, main_world);
     }
 }

@@ -18,15 +18,15 @@ fn main() {
         .run();
 }
 
-fn setup(world: &mut World) {
-    let builder = SimulationBuilder::new()
+fn setup(mut commands: Commands) {
+    let mut simulation = SimulationBuilder::new()
         .register_component::<TurtleBot>()
         .add_startup_systems(sim_startup)
-        .add_compute_systems(sim_update);
+        .add_compute_systems(sim_update)
+        .build();
 
-    let mut sim = builder.build();
-    sim.sync_from_world(world);
-    sim.compute_async();
+    simulation.compute_async();
+    commands.spawn(simulation);
 }
 
 fn sim_startup(mut commands: Commands) {
