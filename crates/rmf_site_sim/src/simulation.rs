@@ -71,7 +71,7 @@ impl SimulationBuilder {
     }
 }
 
-/// A configured simulation, ready to sync and run.
+/// A configured simulation.
 #[derive(Clone, Component)]
 pub struct Simulation {
     entity_cloner: EntityCloner,
@@ -96,7 +96,7 @@ impl Simulation {
     pub fn compute_async(&mut self) {
         let sim_run = Arc::clone(&self.run);
         AsyncComputeTaskPool::get()
-            .spawn(async move { sim_run.lock().unwrap().run() })
+            .spawn(async move { sim_run.lock().unwrap().compute() })
             .detach();
     }
 }
@@ -104,31 +104,27 @@ impl Simulation {
 /// A simulation run that is executed in a separate thread.
 struct SimulationRun {
     world: Arc<Mutex<World>>,
-    startup_schedule: Schedule,
     compute_schedule: Schedule,
 }
 
 impl SimulationRun {
     fn new(
         world: Arc<Mutex<World>>,
-        startup_schedule: Schedule,
+        mut startup_schedule: Schedule,
         compute_schedule: Schedule,
     ) -> Self {
+        {
+            let mut w = world.lock().unwrap();
+            startup_schedule.run(&mut w);
+        }
         SimulationRun {
             world,
-            startup_schedule,
             compute_schedule,
         }
     }
 
-    pub fn run(&mut self) {
-        {
-            let mut world = self.world.lock().unwrap();
-            self.startup_schedule.run(&mut world);
-        }
-        {
-            let mut world = self.world.lock().unwrap();
-            self.compute_schedule.run(&mut world);
-        }
+    pub fn compute(&mut self) {
+        let mut world = self.world.lock().unwrap();
+        self.compute_schedule.run(&mut world);
     }
 }
