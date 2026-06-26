@@ -46,13 +46,13 @@ impl ScheduleBuilder {
         }
     }
 
-    pub fn add_systems<M>(&mut self, systems: impl SimulationScheduleConfigs<M>) -> &mut Self {
+    pub fn add_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
         self.factories
             .push(Box::new(move || systems.into_configs()));
         self
     }
 
-    pub fn set_ordering(&mut self, ordering: SystemExecutionOrdering) -> &mut Self {
+    pub fn set_ordering(mut self, ordering: SystemExecutionOrdering) -> Self {
         self.ordering = ordering;
         self
     }
