@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use std::marker::PhantomData;
 
 /// Clones all registered component types for all entities between two worlds.
+// TODO: Simplify implementation to use generic cloners without a blanket implementation
 #[derive(Default)]
 pub struct EntityCloner {
     entity_map: EntityMap,

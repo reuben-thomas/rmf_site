@@ -24,9 +24,9 @@ fn setup(world: &mut World) {
         .add_startup_systems(sim_startup)
         .add_compute_systems(sim_update);
 
-    let mut primary = builder.build();
-    primary.sync_from_world(world);
-    primary.run_async();
+    let mut sim = builder.build();
+    sim.sync_from_world(world);
+    sim.compute_async();
 }
 
 fn sim_startup(mut commands: Commands) {
