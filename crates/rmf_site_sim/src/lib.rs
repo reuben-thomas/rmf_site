@@ -20,5 +20,5 @@ pub mod simulation;
 pub mod sync;
 pub mod time;
 
-pub use schedule::{SimulationComputeStep, SimulationStartup};
+pub use schedule::*;
 pub use simulation::*;
