@@ -1,5 +1,6 @@
 use crate::schedule::{
     ScheduleBuilder, SimulationComputeStep, SimulationScheduleConfigs, SimulationStartup,
+    SystemExecutionOrdering,
 };
 use crate::sync::EntityCloner;
 use bevy::{prelude::*, tasks::AsyncComputeTaskPool};
@@ -17,16 +18,17 @@ impl Plugin for SimulationPlugin {
 /// Builds a [`Simulation`].
 pub struct SimulationBuilder {
     entity_cloner: EntityCloner,
-    startup_builder: ScheduleBuilder,
-    compute_builder: ScheduleBuilder,
+    startup_schedule_builder: ScheduleBuilder,
+    compute_schedule_builder: ScheduleBuilder,
 }
 
 impl SimulationBuilder {
     pub fn new() -> Self {
         Self {
             entity_cloner: EntityCloner::default(),
-            startup_builder: ScheduleBuilder::new(SimulationStartup),
-            compute_builder: ScheduleBuilder::new(SimulationComputeStep),
+            startup_schedule_builder: ScheduleBuilder::new(SimulationStartup),
+            compute_schedule_builder: ScheduleBuilder::new(SimulationComputeStep)
+                .set_ordering(SystemExecutionOrdering::Total),
         }
     }
 
@@ -36,12 +38,12 @@ impl SimulationBuilder {
     }
 
     pub fn add_startup_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
-        self.startup_builder.add_systems(systems);
+        self.startup_schedule_builder = self.startup_schedule_builder.add_systems(systems);
         self
     }
 
     pub fn add_compute_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
-        self.compute_builder.add_systems(systems);
+        self.compute_schedule_builder = self.compute_schedule_builder.add_systems(systems);
         self
     }
 
@@ -50,8 +52,8 @@ impl SimulationBuilder {
     }
 
     pub fn build(self) -> Simulation {
-        let startup_schedule = self.startup_builder.build();
-        let compute_schedule = self.compute_builder.build();
+        let startup_schedule = self.startup_schedule_builder.build();
+        let compute_schedule = self.compute_schedule_builder.build();
 
         let world = Arc::new(Mutex::new(World::new()));
         let run = Arc::new(Mutex::new(SimulationRun::new(
@@ -87,6 +89,7 @@ impl Simulation {
             .world
             .lock()
             .expect("Failed to lock world for sync_to_world");
+        todo!();
     }
 
     pub fn compute_async(&mut self) {
