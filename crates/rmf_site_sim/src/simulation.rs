@@ -16,6 +16,7 @@ impl Plugin for SimulationPlugin {
 }
 
 /// Builds a [`Simulation`].
+#[derive(Clone, Component)]
 pub struct SimulationBuilder {
     entity_cloner: EntityCloner,
     startup_schedule_builder: ScheduleBuilder,
@@ -51,7 +52,7 @@ impl SimulationBuilder {
         todo!()
     }
 
-    pub fn build(self) -> Simulation {
+    pub fn build(&self) -> Simulation {
         let startup_schedule = self.startup_schedule_builder.build();
         let compute_schedule = self.compute_schedule_builder.build();
 
@@ -63,7 +64,7 @@ impl SimulationBuilder {
         )));
 
         Simulation {
-            entity_cloner: self.entity_cloner,
+            entity_cloner: self.entity_cloner.clone(),
             world,
             run,
         }
@@ -71,7 +72,7 @@ impl SimulationBuilder {
 }
 
 /// A configured simulation, ready to sync and run.
-#[derive(Component)]
+#[derive(Clone, Component)]
 pub struct Simulation {
     entity_cloner: EntityCloner,
     world: Arc<Mutex<World>>,
