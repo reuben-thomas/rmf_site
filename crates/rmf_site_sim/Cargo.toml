@@ -9,3 +9,4 @@ repository = "https://github.com/open-rmf/rmf_site"
 
 [dependencies]
 bevy = {workspace = true, features = ["dynamic_linking"]}
+crossbeam-channel = {workspace = true}

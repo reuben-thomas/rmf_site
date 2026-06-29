@@ -30,13 +30,13 @@ pub enum SystemExecutionOrdering {
 }
 
 // TODO: Arc is not necessary if deciding that SimulationBuilder need not be cloneable, or a component
-type ConfigFactory = Arc<dyn Fn() -> ScheduleConfigs<ScheduleSystem> + Send + Sync>;
+type ScheduleConfigFactory = Arc<dyn Fn() -> ScheduleConfigs<ScheduleSystem> + Send + Sync>;
 
 /// Builds a [`Schedule`] with a set of systems and an execution ordering policy.
 #[derive(Clone)]
 pub struct ScheduleBuilder {
     label: InternedScheduleLabel,
-    factories: Vec<ConfigFactory>,
+    schedule_config_factories: Vec<ScheduleConfigFactory>,
     ordering: SystemExecutionOrdering,
 }
 
@@ -44,13 +44,13 @@ impl ScheduleBuilder {
     pub fn new(label: impl ScheduleLabel) -> Self {
         Self {
             label: label.intern(),
-            factories: Vec::new(),
+            schedule_config_factories: Vec::new(),
             ordering: SystemExecutionOrdering::default(),
         }
     }
 
     pub fn add_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
-        self.factories
+        self.schedule_config_factories
             .push(Arc::new(move || systems.clone().into_configs()));
         self
     }
@@ -62,19 +62,26 @@ impl ScheduleBuilder {
 
     pub fn build(&self) -> Schedule {
         let mut schedule = Schedule::new(self.label);
-        Self::initialize_systems(&self.factories, &self.ordering, &mut schedule);
+        Self::initialize_systems(
+            &self.schedule_config_factories,
+            &self.ordering,
+            &mut schedule,
+        );
         Self::initialize_ordering(&self.ordering, &mut schedule);
         schedule
     }
 
     fn initialize_systems(
-        factories: &Vec<ConfigFactory>,
+        factories: &Vec<ScheduleConfigFactory>,
         ordering: &SystemExecutionOrdering,
         schedule: &mut Schedule,
     ) {
         let configs = factories.iter().map(|f| f());
         match ordering {
             SystemExecutionOrdering::Total => {
+                // TODO:
+                // - Consider a default ordering by system names
+                // - A chain should not conflict existing ordering bounds
                 if let Some(chained) = configs.reduce(|a, b| (a, b).chain()) {
                     schedule.add_systems(chained);
                 }
@@ -87,5 +94,7 @@ impl ScheduleBuilder {
         }
     }
 
-    fn initialize_ordering(_ordering: &SystemExecutionOrdering, _schedule: &mut Schedule) {}
+    fn initialize_ordering(_ordering: &SystemExecutionOrdering, _schedule: &mut Schedule) {
+        // TODO
+    }
 }
