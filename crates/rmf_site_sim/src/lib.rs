@@ -15,9 +15,10 @@
  *
 */
 
+pub mod compute;
+pub mod extract;
 pub mod schedule;
 pub mod simulation;
-pub mod sync;
 pub mod time;
 
 pub use schedule::*;

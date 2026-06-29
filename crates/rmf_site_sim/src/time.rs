@@ -1,3 +1,4 @@
+use bevy::prelude::Resource;
 use std::time::Duration;
 
 // TODO:
@@ -6,7 +7,7 @@ use std::time::Duration;
 //   e.g.
 //   use rmf_site_sim::time::Time as SimulationTime;
 //   use bevy::time::Time;
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SimulationTime(Duration);
 
 impl SimulationTime {

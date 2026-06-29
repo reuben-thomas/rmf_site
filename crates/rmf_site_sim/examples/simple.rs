@@ -18,25 +18,21 @@ fn main() {
         .run();
 }
 
-fn setup(mut commands: Commands) {
-    let mut simulation = SimulationBuilder::new()
-        .register_component::<TurtleBot>()
-        .add_startup_systems(sim_startup)
-        .add_compute_systems(sim_update)
-        .build();
-
-    simulation.compute_async();
-    commands.spawn(simulation);
-}
-
-fn sim_startup(mut commands: Commands) {
-    info!("startup - Spawning robots...");
-    commands.spawn(TurtleBot {
+fn setup(world: &mut World) {
+    info!("main - Spawning robots...");
+    world.spawn(TurtleBot {
         name: "TurtleBot1".to_string(),
     });
-    commands.spawn(TurtleBot {
+    world.spawn(TurtleBot {
         name: "TurtleBot2".to_string(),
     });
+
+    let simulation = SimulationBuilder::new()
+        .register_component::<TurtleBot>()
+        .add_compute_systems(sim_update)
+        .build(world);
+
+    world.spawn(simulation);
 }
 
 fn sim_update(query: Query<(Entity, &TurtleBot)>) {
