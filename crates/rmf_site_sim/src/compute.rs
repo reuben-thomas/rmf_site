@@ -1,36 +1,104 @@
-use crate::extract::EntityExtractor;
-use crate::simulation::SimulationStep;
+use crate::schedule::SimulationPostComputeStep;
+use crate::simulation::{SimulationInitStep, SimulationStep};
+use crate::sync::EntitySynchronizer;
 use crate::time::SimulationTime;
 use bevy::prelude::*;
 use crossbeam_channel::Sender;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 
+// TODO: Error handling, this is being executed in a separate thread.
 pub fn compute_simulation(
     mut startup_schedule: Schedule,
-    mut compute_schedule: Schedule,
-    extractor: EntityExtractor,
+    system_schedule: Schedule,
+    synchronizer: EntitySynchronizer,
     entities: Vec<Entity>,
-    initial_step: SimulationStep,
+    init_step: SimulationInitStep,
     step_sender: Sender<SimulationStep>,
 ) {
-    let mut world = create_world(entities, initial_step);
+    let mut world = create_world(entities, init_step);
+    world.init_resource::<SimulationClock>();
+
+    let mut post_system_schedule = Schedule::new(SimulationPostComputeStep);
+    post_system_schedule.add_systems(SimulationClock::advance);
+    synchronizer.configure_tracking(&mut world, &mut post_system_schedule, step_sender);
+
     startup_schedule.run(&mut world);
-    compute_schedule.run(&mut world);
-
-    let time = SimulationTime::default();
-    let commands = extractor.extract_components(&world);
-
-    let _ = step_sender.send(SimulationStep { time, commands });
+    run_systems(system_schedule, post_system_schedule, &mut world);
 }
 
-fn create_world(entities: Vec<Entity>, initial_step: SimulationStep) -> World {
+fn create_world(entities: Vec<Entity>, init_step: SimulationInitStep) -> World {
     let mut world = World::new();
     for entity in entities {
         spawn_at(&mut world, entity);
     }
-    for command in initial_step.commands {
+    for command in init_step.commands {
         command.apply(&mut world);
     }
     world
+}
+
+fn run_systems(
+    mut system_schedule: Schedule,
+    mut post_system_schedule: Schedule,
+    world: &mut World,
+) {
+    loop {
+        system_schedule.run(world);
+        post_system_schedule.run(world);
+
+        // TODO: This should be a generic trait with a builtin impl,
+        // e.g. crate::simulation::EndCondition
+        if world.resource::<SimulationClock>().at_end() {
+            break;
+        }
+    }
+}
+
+#[derive(Resource, Default)]
+pub struct SimulationClock {
+    current: SimulationTime,
+    pending: BinaryHeap<Reverse<SimulationTime>>,
+}
+
+impl SimulationClock {
+    pub fn now(&self) -> SimulationTime {
+        self.current
+    }
+
+    pub fn add(&mut self, time: SimulationTime) {
+        // TODO: Better error handling than panicking
+        if time <= self.current {
+            panic!(
+                "Tried to add time {time:?} that is not greater than the current time {:?}.",
+                self.now()
+            )
+        }
+        self.pending.push(Reverse(time));
+    }
+
+    fn at_end(&self) -> bool {
+        self.pending.is_empty()
+    }
+
+    fn next(&mut self) -> Option<SimulationTime> {
+        if self.at_end() {
+            return None;
+        }
+
+        let Reverse(time) = self.pending.pop()?;
+        self.current = time;
+        Some(time)
+    }
+
+    pub fn advance(mut clock: ResMut<SimulationClock>) {
+        if clock.at_end() {
+            info!("Compute clock reached end at time {:?}", clock.now());
+            return;
+        }
+
+        clock.next();
+    }
 }
 
 // TODO: This method is only in newer versions of Bevy.
