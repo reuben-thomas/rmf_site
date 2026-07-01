@@ -12,6 +12,10 @@ pub struct SimulationStartup;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
 pub struct SimulationComputeStep;
 
+/// The schedule that runs after each [`SimulationComputeStep`].
+#[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
+pub struct SimulationPostComputeStep;
+
 pub trait SimulationScheduleConfigs<M>:
     IntoScheduleConfigs<ScheduleSystem, M> + Clone + Send + Sync + 'static
 {

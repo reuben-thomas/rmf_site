@@ -28,7 +28,7 @@ fn setup(world: &mut World) {
     });
 
     let simulation = SimulationBuilder::new()
-        .register_component::<TurtleBot>()
+        .register_tracked_component::<TurtleBot>()
         .add_compute_systems(sim_update)
         .build(world);
 
