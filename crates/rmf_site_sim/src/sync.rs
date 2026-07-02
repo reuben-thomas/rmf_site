@@ -1,4 +1,5 @@
-use crate::compute::SimulationClock;
+use crate::compute::SimulationComputeClock;
+use crate::schedule::{SimulationCompute, SimulationComputeStep};
 use crate::simulation::{ComponentChanges, SimulationCommand, SimulationStep};
 use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
 use bevy::ecs::schedule::ScheduleConfigs;
@@ -6,12 +7,18 @@ use bevy::ecs::system::ScheduleSystem;
 use bevy::prelude::*;
 use crossbeam_channel::Sender;
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct EntitySynchronizer {
     synchronizers: Vec<ComponentSynchronizer>,
 }
 
 impl EntitySynchronizer {
+    pub fn new() -> Self {
+        Self {
+            synchronizers: Vec::new(),
+        }
+    }
+
     /// Registers a component that should be extracted to the simulation world,
     /// but should not be tracked in a [`SimulationStep`] sent to the main world.
     pub fn register_untracked<T: Component + Clone>(&mut self) {
@@ -45,24 +52,29 @@ impl EntitySynchronizer {
             .map(|synchronizer| (synchronizer.extract_components)(world))
             .collect()
     }
+}
 
-    /// Inserts the resources required for tracking ([`SimulationCommandBuffer`] and
-    /// [`StepSender`]) into `world`, and adds the systems for tracking all tracked components.
-    pub fn configure_tracking(
-        &self,
-        world: &mut World,
-        schedule: &mut Schedule,
-        step_sender: Sender<SimulationStep>,
-    ) {
-        world.init_resource::<SimulationCommandBuffer>();
-        world.insert_resource(StepSender::new(step_sender));
+impl Plugin for EntitySynchronizer {
+    /// Inserts the [`SimulationCommandBuffer`] that tracking systems write to, and adds
+    /// the systems for tracking all tracked components along with the flush that sends
+    /// each [`SimulationStep`] back to the main world.
+    ///
+    /// The compute app must also contain a [`StepSender`] resource for the flush to use.
+    fn build(&self, app: &mut App) {
+        app.init_resource::<SimulationCommandBuffer>();
 
         for synchronizer in &self.synchronizers {
             if let Some(tracking_system) = synchronizer.tracking_system {
-                schedule.add_systems(tracking_system().before(SimulationCommandBuffer::flush));
+                app.add_systems(
+                    SimulationComputeStep,
+                    tracking_system().in_set(SimulationCompute::BufferChangedComponents),
+                );
             }
         }
-        schedule.add_systems(SimulationCommandBuffer::flush.before(SimulationClock::advance));
+        app.add_systems(
+            SimulationComputeStep,
+            SimulationCommandBuffer::flush.in_set(SimulationCompute::SendSimulationStep),
+        );
     }
 }
 
@@ -145,7 +157,11 @@ impl SimulationCommandBuffer {
         buffer.push(Box::new(ComponentChanges(changes)));
     }
 
-    fn flush(clock: Res<SimulationClock>, mut buffer: ResMut<Self>, sender: Res<StepSender>) {
+    fn flush(
+        clock: Res<SimulationComputeClock>,
+        mut buffer: ResMut<Self>,
+        sender: Res<StepSender>,
+    ) {
         let commands = buffer.take();
         if commands.is_empty() {
             return;

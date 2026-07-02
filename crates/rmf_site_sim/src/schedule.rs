@@ -1,20 +1,28 @@
+use bevy::app::{App, Plugin};
 use bevy::ecs::schedule::{
-    InternedScheduleLabel, IntoScheduleConfigs, Schedule, ScheduleConfigs, ScheduleLabel,
+    ExecutorKind, InternedScheduleLabel, InternedSystemSet, IntoScheduleConfigs, ScheduleConfigs,
+    ScheduleLabel, SystemSet,
 };
 use bevy::ecs::system::ScheduleSystem;
 use std::sync::Arc;
 
 /// The schedule that runs once when the a simulation is started.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
-pub struct SimulationStartup;
+pub struct SimulationSetup;
 
-/// The schedule containing systems representing models in the simulation, that must be run once per simulation step.
+/// The schedule that runs once per simulation step.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
 pub struct SimulationComputeStep;
 
-/// The schedule that runs after each [`SimulationComputeStep`].
-#[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
-pub struct SimulationPostComputeStep;
+/// The system sets that structure a single [`SimulationComputeStep`].
+#[derive(Clone, Debug, PartialEq, Eq, Hash, SystemSet)]
+pub enum SimulationCompute {
+    ExecuteSystems,
+    BufferChangedComponents,
+    SendSimulationStep,
+    ScheduleNextStep,
+    IncrementComputeClock,
+}
 
 pub trait SimulationScheduleConfigs<M>:
     IntoScheduleConfigs<ScheduleSystem, M> + Clone + Send + Sync + 'static
@@ -33,15 +41,16 @@ pub enum SystemExecutionOrdering {
     Total,
 }
 
-// TODO: Arc is not necessary if deciding that SimulationBuilder need not be cloneable, or a component
 type ScheduleConfigFactory = Arc<dyn Fn() -> ScheduleConfigs<ScheduleSystem> + Send + Sync>;
 
-/// Builds a [`Schedule`] with a set of systems and an execution ordering policy.
+/// A [`Plugin`] that adds a set of systems to the schedule identified by `label`,
+/// with an execution ordering policyjkjjjGkk.
 #[derive(Clone)]
 pub struct ScheduleBuilder {
     label: InternedScheduleLabel,
     schedule_config_factories: Vec<ScheduleConfigFactory>,
     ordering: SystemExecutionOrdering,
+    system_set: Option<InternedSystemSet>,
 }
 
 impl ScheduleBuilder {
@@ -50,6 +59,7 @@ impl ScheduleBuilder {
             label: label.intern(),
             schedule_config_factories: Vec::new(),
             ordering: SystemExecutionOrdering::default(),
+            system_set: None,
         }
     }
 
@@ -64,41 +74,46 @@ impl ScheduleBuilder {
         self
     }
 
-    pub fn build(&self) -> Schedule {
-        let mut schedule = Schedule::new(self.label);
-        Self::initialize_systems(
-            &self.schedule_config_factories,
-            &self.ordering,
-            &mut schedule,
-        );
-        Self::initialize_ordering(&self.ordering, &mut schedule);
-        schedule
+    /// Places all systems added to this builder in the given [`SystemSet`].
+    pub fn in_set(mut self, set: impl SystemSet) -> Self {
+        self.system_set = Some(set.intern());
+        self
     }
+}
 
-    fn initialize_systems(
-        factories: &Vec<ScheduleConfigFactory>,
-        ordering: &SystemExecutionOrdering,
-        schedule: &mut Schedule,
-    ) {
-        let configs = factories.iter().map(|f| f());
-        match ordering {
+impl Plugin for ScheduleBuilder {
+    fn build(&self, app: &mut App) {
+        let configs = self
+            .schedule_config_factories
+            .iter()
+            .map(|factory| match self.system_set {
+                Some(set) => factory().in_set(set),
+                None => factory(),
+            });
+
+        match &self.ordering {
             SystemExecutionOrdering::Total => {
                 // TODO:
                 // - Consider a default ordering by system names
                 // - A chain should not conflict existing ordering bounds
-                if let Some(chained) = configs.reduce(|a, b| (a, b).chain()) {
-                    schedule.add_systems(chained);
-                }
+                let chained_systems = configs.reduce(|a, b| (a, b).chain()).unwrap();
+                app.add_systems(self.label, chained_systems);
+                // TODO:
+                // - A single threaded executor does not guarantee total ordering across runs
+                // - Implement a custom https://docs.rs/bevy/0.16.1/bevy/ecs/schedule/trait.ScheduleBuildPass.html
+                app.edit_schedule(self.label, |schedule| {
+                    schedule.set_executor_kind(ExecutorKind::SingleThreaded);
+                });
             }
             SystemExecutionOrdering::Partial => {
                 for config in configs {
-                    schedule.add_systems(config);
+                    app.add_systems(self.label, config);
                 }
             }
         }
     }
 
-    fn initialize_ordering(_ordering: &SystemExecutionOrdering, _schedule: &mut Schedule) {
-        // TODO
+    fn is_unique(&self) -> bool {
+        false
     }
 }

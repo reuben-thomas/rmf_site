@@ -1,14 +1,17 @@
-use crate::compute::compute_simulation;
+use crate::compute::{SimulationComputePlugin, compute_simulation};
+use crate::event::DiscreteEventsPlugin;
 use crate::schedule::{
-    ScheduleBuilder, SimulationComputeStep, SimulationScheduleConfigs, SimulationStartup,
-    SystemExecutionOrdering,
+    ScheduleBuilder, SimulationCompute, SimulationComputeStep, SimulationScheduleConfigs,
+    SimulationSetup, SystemExecutionOrdering,
 };
-use crate::sync::EntitySynchronizer;
+use crate::sync::{EntitySynchronizer, StepSender};
 use crate::time::SimulationTime;
+use bevy::app::SubApp;
 use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;
-use crossbeam_channel::{Receiver, unbounded};
-use std::thread;
+use bevy::tasks::{AsyncComputeTaskPool, Task};
+use crossbeam_channel::{Receiver, Sender, unbounded};
+use std::sync::Arc;
 
 /// Plugin for computing discrete event simulations.
 pub struct SimulationPlugin;
@@ -24,17 +27,20 @@ impl Plugin for SimulationPlugin {
 #[derive(Clone, Component)]
 pub struct SimulationBuilder {
     synchronizer: EntitySynchronizer,
-    startup_schedule_builder: ScheduleBuilder,
+    setup_schedule_builder: ScheduleBuilder,
     compute_schedule_builder: ScheduleBuilder,
+    compute_plugin_configs: Vec<SubAppPluginConfig>,
 }
 
 impl SimulationBuilder {
     pub fn new() -> Self {
         Self {
-            synchronizer: EntitySynchronizer::default(),
-            startup_schedule_builder: ScheduleBuilder::new(SimulationStartup),
+            synchronizer: EntitySynchronizer::new(),
+            setup_schedule_builder: ScheduleBuilder::new(SimulationSetup),
             compute_schedule_builder: ScheduleBuilder::new(SimulationComputeStep)
-                .set_ordering(SystemExecutionOrdering::Total),
+                .set_ordering(SystemExecutionOrdering::Total)
+                .in_set(SimulationCompute::ExecuteSystems),
+            compute_plugin_configs: Vec::new(),
         }
     }
 
@@ -48,8 +54,15 @@ impl SimulationBuilder {
         self
     }
 
-    pub fn add_startup_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
-        self.startup_schedule_builder = self.startup_schedule_builder.add_systems(systems);
+    pub fn register_event<T: Event>(mut self) -> Self {
+        self.compute_plugin_configs.push(Arc::new(|sub_app| {
+            sub_app.add_plugins(DiscreteEventsPlugin::<T>::default());
+        }));
+        self
+    }
+
+    pub fn add_setup_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
+        self.setup_schedule_builder = self.setup_schedule_builder.add_systems(systems);
         self
     }
 
@@ -58,65 +71,65 @@ impl SimulationBuilder {
         self
     }
 
-    pub fn register_event<T: Event>(self) -> Self {
-        todo!()
+    pub fn build(&self, world: &World) -> Simulation {
+        let entities = self.synchronizer.extract_entities(world);
+        let init_step = SimulationInitStep {
+            commands: self.synchronizer.extract_components(world),
+        };
+        let (step_sender, step_receiver) = unbounded();
+        let sub_app = self.build_compute_sub_app(step_sender);
+
+        let compute_task = AsyncComputeTaskPool::get().spawn(compute_simulation(
+            sub_app,
+            entities,
+            init_step.clone(),
+        ));
+
+        Simulation {
+            init_step,
+            steps: Vec::new(),
+            step_receiver,
+            compute_task,
+        }
     }
 
-    pub fn build(&self, world: &World) -> Simulation {
-        Simulation::new(
+    fn build_compute_sub_app(&self, step_sender: Sender<SimulationStep>) -> SubApp {
+        let mut sub_app = SubApp::new();
+        sub_app.insert_resource(StepSender::new(step_sender));
+        sub_app.add_plugins((
+            SimulationComputePlugin,
             self.synchronizer.clone(),
-            self.startup_schedule_builder.build(),
-            self.compute_schedule_builder.build(),
-            world,
-        )
+            self.setup_schedule_builder.clone(),
+            self.compute_schedule_builder.clone(),
+        ));
+        for install in &self.compute_plugin_configs {
+            install(&mut sub_app);
+        }
+        sub_app.finish();
+        sub_app.cleanup();
+        sub_app
     }
 }
+
+// TODO: Remember not to make this a type unless duplicated across sites.
+type SubAppPluginConfig = Arc<dyn Fn(&mut SubApp) + Send + Sync>;
 
 #[derive(Component)]
 pub struct Simulation {
     init_step: SimulationInitStep,
-    simulation_steps: Vec<SimulationStep>,
+    steps: Vec<SimulationStep>,
     step_receiver: Receiver<SimulationStep>,
+    // TODO: Better way to keep task alive?
+    compute_task: Task<()>,
 }
 
 impl Simulation {
-    fn new(
-        synchronizer: EntitySynchronizer,
-        startup_schedule: Schedule,
-        system_schedule: Schedule,
-        world: &World,
-    ) -> Self {
-        let entities = synchronizer.extract_entities(world);
-        let init_step = SimulationInitStep {
-            commands: synchronizer.extract_components(world),
-        };
-        let compute_init_step = init_step.clone();
-        let (step_sender, step_receiver) = unbounded();
-
-        thread::spawn(move || {
-            compute_simulation(
-                startup_schedule,
-                system_schedule,
-                synchronizer,
-                entities,
-                compute_init_step,
-                step_sender,
-            );
-        });
-
-        Self {
-            step_receiver,
-            init_step,
-            simulation_steps: Vec::new(),
-        }
-    }
-
-    // TODO: Time bound this system in order to avoid delaying the main app.
+    // TODO: Time bound this system in order to avoid delaying the main app. Alternatively, bound channel.
     fn update_steps(mut simulations: Query<&mut Simulation>) {
         for mut simulation in &mut simulations {
             let simulation = &mut *simulation;
             for step in simulation.step_receiver.try_iter() {
-                simulation.simulation_steps.push(step);
+                simulation.steps.push(step);
             }
         }
     }
@@ -135,7 +148,7 @@ pub struct SimulationInitStep {
 
 // TODO:
 // - Just enforce Command + Sync instead?
-// - This is a terrible data structure to store changes
+// - This is a terrible data structure to efficiently store changes.
 pub trait SimulationCommand: Send + Sync + 'static {
     fn apply(self: Box<Self>, world: &mut World);
     fn clone_box(&self) -> Box<dyn SimulationCommand>;

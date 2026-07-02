@@ -1,67 +1,78 @@
-use crate::schedule::SimulationPostComputeStep;
-use crate::simulation::{SimulationInitStep, SimulationStep};
-use crate::sync::EntitySynchronizer;
+use crate::schedule::{SimulationCompute, SimulationComputeStep, SimulationSetup};
+use crate::simulation::SimulationInitStep;
 use crate::time::SimulationTime;
+use bevy::app::SubApp;
 use bevy::prelude::*;
-use crossbeam_channel::Sender;
+use bevy::tasks::futures_lite::future;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-// TODO: Error handling, this is being executed in a separate thread.
-pub fn compute_simulation(
-    mut startup_schedule: Schedule,
-    system_schedule: Schedule,
-    synchronizer: EntitySynchronizer,
+pub struct SimulationComputePlugin;
+const YIELD_AFTER_STEPS: u32 = 64;
+
+impl Plugin for SimulationComputePlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<SimulationComputeClock>()
+            .init_schedule(SimulationSetup)
+            .init_schedule(SimulationComputeStep)
+            .configure_sets(
+                SimulationComputeStep,
+                (
+                    SimulationCompute::ExecuteSystems,
+                    SimulationCompute::BufferChangedComponents,
+                    SimulationCompute::SendSimulationStep,
+                    SimulationCompute::ScheduleNextStep,
+                    SimulationCompute::IncrementComputeClock,
+                )
+                    .chain(),
+            )
+            .add_systems(
+                SimulationComputeStep,
+                SimulationComputeClock::advance.in_set(SimulationCompute::IncrementComputeClock),
+            );
+    }
+}
+
+// TODO: Error handling, this is being executed in a task pool.
+pub async fn compute_simulation(
+    mut sub_app: SubApp,
     entities: Vec<Entity>,
     init_step: SimulationInitStep,
-    step_sender: Sender<SimulationStep>,
 ) {
-    let mut world = create_world(entities, init_step);
-    world.init_resource::<SimulationClock>();
-
-    let mut post_system_schedule = Schedule::new(SimulationPostComputeStep);
-    post_system_schedule.add_systems(SimulationClock::advance);
-    synchronizer.configure_tracking(&mut world, &mut post_system_schedule, step_sender);
-
-    startup_schedule.run(&mut world);
-    run_systems(system_schedule, post_system_schedule, &mut world);
-}
-
-fn create_world(entities: Vec<Entity>, init_step: SimulationInitStep) -> World {
-    let mut world = World::new();
+    let world = sub_app.world_mut();
     for entity in entities {
-        spawn_at(&mut world, entity);
+        spawn_at(world, entity);
     }
     for command in init_step.commands {
-        command.apply(&mut world);
+        command.apply(world);
     }
-    world
-}
+    world.run_schedule(SimulationSetup);
 
-fn run_systems(
-    mut system_schedule: Schedule,
-    mut post_system_schedule: Schedule,
-    world: &mut World,
-) {
+    let mut steps = 0u32;
     loop {
-        system_schedule.run(world);
-        post_system_schedule.run(world);
+        world.run_schedule(SimulationComputeStep);
+        world.clear_trackers();
 
         // TODO: This should be a generic trait with a builtin impl,
         // e.g. crate::simulation::EndCondition
-        if world.resource::<SimulationClock>().at_end() {
+        if world.resource::<SimulationComputeClock>().at_end() {
             break;
+        }
+
+        steps += 1;
+        if steps.is_multiple_of(YIELD_AFTER_STEPS) {
+            future::yield_now().await;
         }
     }
 }
 
 #[derive(Resource, Default)]
-pub struct SimulationClock {
+pub struct SimulationComputeClock {
     current: SimulationTime,
     pending: BinaryHeap<Reverse<SimulationTime>>,
 }
 
-impl SimulationClock {
+impl SimulationComputeClock {
     pub fn now(&self) -> SimulationTime {
         self.current
     }
@@ -91,7 +102,7 @@ impl SimulationClock {
         Some(time)
     }
 
-    pub fn advance(mut clock: ResMut<SimulationClock>) {
+    pub fn advance(mut clock: ResMut<SimulationComputeClock>) {
         if clock.at_end() {
             info!("Compute clock reached end at time {:?}", clock.now());
             return;
