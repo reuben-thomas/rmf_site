@@ -1,5 +1,5 @@
 use bevy::ecs::schedule::{
-    InternedScheduleLabel, IntoScheduleConfigs, Schedule, ScheduleConfigs, ScheduleLabel,
+    InternedScheduleLabel, IntoScheduleConfigs, Schedule, ScheduleConfigs, ScheduleLabel, SystemSet,
 };
 use bevy::ecs::system::ScheduleSystem;
 use std::sync::Arc;
@@ -12,9 +12,12 @@ pub struct SimulationStartup;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
 pub struct SimulationComputeStep;
 
-/// The schedule that runs after each [`SimulationComputeStep`].
-#[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
-pub struct SimulationPostComputeStep;
+/// System sets that order execution within a [`SimulationComputeStep`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SystemSet)]
+pub enum SimulationComputeSet {
+    ExecuteSystems,
+    SendSimulationStep,
+}
 
 pub trait SimulationScheduleConfigs<M>:
     IntoScheduleConfigs<ScheduleSystem, M> + Clone + Send + Sync + 'static
@@ -56,6 +59,18 @@ impl ScheduleBuilder {
     pub fn add_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
         self.schedule_config_factories
             .push(Arc::new(move || systems.clone().into_configs()));
+        self
+    }
+
+    /// Adds systems to the schedule, tagged with the given system set.
+    pub fn add_systems_in_set<M>(
+        mut self,
+        systems: impl SimulationScheduleConfigs<M>,
+        set: impl SystemSet + Clone,
+    ) -> Self {
+        self.schedule_config_factories.push(Arc::new(move || {
+            systems.clone().into_configs().in_set(set.clone())
+        }));
         self
     }
 

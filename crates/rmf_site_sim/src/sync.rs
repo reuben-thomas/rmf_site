@@ -1,4 +1,5 @@
 use crate::compute::SimulationClock;
+use crate::schedule::SimulationComputeSet;
 use crate::simulation::{ComponentChanges, SimulationCommand, SimulationStep};
 use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
 use bevy::ecs::schedule::ScheduleConfigs;
@@ -59,10 +60,18 @@ impl EntitySynchronizer {
 
         for synchronizer in &self.synchronizers {
             if let Some(tracking_system) = synchronizer.tracking_system {
-                schedule.add_systems(tracking_system().before(SimulationCommandBuffer::flush));
+                schedule.add_systems(
+                    tracking_system()
+                        .before(SimulationCommandBuffer::flush)
+                        .in_set(SimulationComputeSet::SendSimulationStep),
+                );
             }
         }
-        schedule.add_systems(SimulationCommandBuffer::flush.before(SimulationClock::advance));
+        schedule.add_systems(
+            SimulationCommandBuffer::flush
+                .before(SimulationClock::advance)
+                .in_set(SimulationComputeSet::SendSimulationStep),
+        );
     }
 }
 
