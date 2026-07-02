@@ -1,4 +1,4 @@
-use crate::schedule::SimulationPostComputeStep;
+use crate::schedule::SimulationComputeSet;
 use crate::simulation::{SimulationInitStep, SimulationStep};
 use crate::sync::EntitySynchronizer;
 use crate::time::SimulationTime;
@@ -10,7 +10,7 @@ use std::collections::BinaryHeap;
 // TODO: Error handling, this is being executed in a separate thread.
 pub fn compute_simulation(
     mut startup_schedule: Schedule,
-    system_schedule: Schedule,
+    mut system_schedule: Schedule,
     synchronizer: EntitySynchronizer,
     entities: Vec<Entity>,
     init_step: SimulationInitStep,
@@ -19,12 +19,15 @@ pub fn compute_simulation(
     let mut world = create_world(entities, init_step);
     world.init_resource::<SimulationClock>();
 
-    let mut post_system_schedule = Schedule::new(SimulationPostComputeStep);
-    post_system_schedule.add_systems(SimulationClock::advance);
-    synchronizer.configure_tracking(&mut world, &mut post_system_schedule, step_sender);
+    system_schedule.configure_sets(
+        SimulationComputeSet::ExecuteSystems.before(SimulationComputeSet::SendSimulationStep),
+    );
+    system_schedule
+        .add_systems(SimulationClock::advance.in_set(SimulationComputeSet::SendSimulationStep));
+    synchronizer.configure_tracking(&mut world, &mut system_schedule, step_sender);
 
     startup_schedule.run(&mut world);
-    run_systems(system_schedule, post_system_schedule, &mut world);
+    run_systems(system_schedule, &mut world);
 }
 
 fn create_world(entities: Vec<Entity>, init_step: SimulationInitStep) -> World {
@@ -38,14 +41,9 @@ fn create_world(entities: Vec<Entity>, init_step: SimulationInitStep) -> World {
     world
 }
 
-fn run_systems(
-    mut system_schedule: Schedule,
-    mut post_system_schedule: Schedule,
-    world: &mut World,
-) {
+fn run_systems(mut system_schedule: Schedule, world: &mut World) {
     loop {
         system_schedule.run(world);
-        post_system_schedule.run(world);
 
         // TODO: This should be a generic trait with a builtin impl,
         // e.g. crate::simulation::EndCondition

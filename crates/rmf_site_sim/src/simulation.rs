@@ -1,7 +1,7 @@
 use crate::compute::compute_simulation;
 use crate::schedule::{
-    ScheduleBuilder, SimulationComputeStep, SimulationScheduleConfigs, SimulationStartup,
-    SystemExecutionOrdering,
+    ScheduleBuilder, SimulationComputeSet, SimulationComputeStep, SimulationScheduleConfigs,
+    SimulationStartup, SystemExecutionOrdering,
 };
 use crate::sync::EntitySynchronizer;
 use crate::time::SimulationTime;
@@ -54,7 +54,9 @@ impl SimulationBuilder {
     }
 
     pub fn add_compute_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
-        self.compute_schedule_builder = self.compute_schedule_builder.add_systems(systems);
+        self.compute_schedule_builder = self
+            .compute_schedule_builder
+            .add_systems_in_set(systems, SimulationComputeSet::ExecuteSystems);
         self
     }
 
