@@ -72,7 +72,11 @@ fn run_simulation(mut app: App) -> AppExit {
 
         // TODO: This should be a generic trait with a builtin impl,
         // e.g. crate::simulation::EndCondition
-        if app.world().resource::<SimulationComputeClock>().at_end() {
+        if app
+            .world()
+            .resource::<SimulationComputeClock>()
+            .is_complete()
+        {
             break;
         }
     }
@@ -83,6 +87,7 @@ fn run_simulation(mut app: App) -> AppExit {
 pub struct SimulationComputeClock {
     current: SimulationTime,
     pending: BTreeSet<SimulationTime>,
+    is_complete: bool,
 }
 
 impl SimulationComputeClock {
@@ -101,8 +106,8 @@ impl SimulationComputeClock {
         self.pending.insert(time);
     }
 
-    fn at_end(&self) -> bool {
-        self.pending.is_empty()
+    fn is_complete(&self) -> bool {
+        self.is_complete
     }
 
     fn next(&mut self) -> Option<SimulationTime> {
@@ -112,8 +117,9 @@ impl SimulationComputeClock {
     }
 
     pub fn advance(mut clock: ResMut<SimulationComputeClock>) {
-        if clock.at_end() {
+        if clock.pending.is_empty() {
             debug!("Compute clock reached end at time {:?}", clock.now());
+            clock.is_complete = true;
             return;
         }
 
