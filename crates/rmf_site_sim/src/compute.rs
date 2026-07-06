@@ -6,8 +6,7 @@ use crate::sync::EntitySynchronizer;
 use crate::time::SimulationTime;
 use bevy::prelude::*;
 use crossbeam_channel::Sender;
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::BTreeSet;
 
 // TODO: Error handling, this is being executed in a separate thread.
 pub fn compute_simulation(compute_plugin: SimulationComputePlugin, plugins: Vec<PluginFactory>) {
@@ -42,11 +41,17 @@ impl Plugin for SimulationComputePlugin {
 
         let startup_schedule = self.startup_schedule_builder.build();
         let mut system_schedule = self.compute_schedule_builder.build();
+        // TODO: Should the following configuration logic be within the builder?
         system_schedule.configure_sets(
-            SimulationComputeSet::ExecuteSystems.before(SimulationComputeSet::SendSimulationStep),
+            (
+                SimulationComputeSet::ExecuteSystems,
+                SimulationComputeSet::SendSimulationStep,
+                SimulationComputeSet::IncrementComputeClock,
+            )
+                .chain(),
         );
         system_schedule.add_systems(
-            SimulationComputeClock::advance.in_set(SimulationComputeSet::SendSimulationStep),
+            SimulationComputeClock::advance.in_set(SimulationComputeSet::IncrementComputeClock),
         );
         self.synchronizer.configure_tracking(
             app.world_mut(),
@@ -77,7 +82,7 @@ fn run_simulation(mut app: App) -> AppExit {
 #[derive(Resource, Default)]
 pub struct SimulationComputeClock {
     current: SimulationTime,
-    pending: BinaryHeap<Reverse<SimulationTime>>,
+    pending: BTreeSet<SimulationTime>,
 }
 
 impl SimulationComputeClock {
@@ -93,7 +98,7 @@ impl SimulationComputeClock {
                 self.now()
             )
         }
-        self.pending.push(Reverse(time));
+        self.pending.insert(time);
     }
 
     fn at_end(&self) -> bool {
@@ -101,11 +106,7 @@ impl SimulationComputeClock {
     }
 
     fn next(&mut self) -> Option<SimulationTime> {
-        if self.at_end() {
-            return None;
-        }
-
-        let Reverse(time) = self.pending.pop()?;
+        let time = self.pending.pop_first()?;
         self.current = time;
         Some(time)
     }

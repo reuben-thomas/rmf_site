@@ -47,8 +47,7 @@ impl EntitySynchronizer {
             .collect()
     }
 
-    /// Inserts the resources required for tracking ([`SimulationCommandBuffer`] and
-    /// [`StepSender`]) into `world`, and adds the systems for tracking all tracked components.
+    /// Inserts the resources required for tracking changes to components.
     pub fn configure_tracking(
         &self,
         world: &mut World,
@@ -62,13 +61,13 @@ impl EntitySynchronizer {
             if let Some(tracking_system) = synchronizer.tracking_system {
                 schedule.add_systems(
                     tracking_system()
-                        .before(SimulationCommandBuffer::flush)
+                        .before(SimulationCommandBuffer::send_step)
                         .in_set(SimulationComputeSet::SendSimulationStep),
                 );
             }
         }
         schedule.add_systems(
-            SimulationCommandBuffer::flush
+            SimulationCommandBuffer::send_step
                 .before(SimulationComputeClock::advance)
                 .in_set(SimulationComputeSet::SendSimulationStep),
         );
@@ -125,8 +124,8 @@ impl StepSender {
     }
 }
 
-/// A buffer to store a series of [`SimulationCommand`]s built in the current step, to be flushed
-/// back to the main world as a single [`SimulationStep`].
+/// A buffer to store a series of [`SimulationCommand`]s built in the current step,
+/// sent to the main world as a single [`SimulationStep`].
 #[derive(Resource, Default)]
 pub struct SimulationCommandBuffer(Vec<Box<dyn SimulationCommand>>);
 
@@ -154,7 +153,7 @@ impl SimulationCommandBuffer {
         buffer.push(Box::new(ComponentChanges(changes)));
     }
 
-    fn flush(
+    fn send_step(
         clock: Res<SimulationComputeClock>,
         mut buffer: ResMut<Self>,
         sender: Res<StepSender>,
