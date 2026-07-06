@@ -1,13 +1,15 @@
-use crate::compute::compute_simulation;
+use crate::compute::{SimulationComputePlugin, compute_simulation};
 use crate::schedule::{
     ScheduleBuilder, SimulationComputeSet, SimulationComputeStep, SimulationScheduleConfigs,
     SimulationStartup, SystemExecutionOrdering,
 };
 use crate::sync::EntitySynchronizer;
 use crate::time::SimulationTime;
+use bevy::app::Plugins;
 use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, unbounded};
+use std::sync::Arc;
 use std::thread;
 
 /// Plugin for computing discrete event simulations.
@@ -20,12 +22,22 @@ impl Plugin for SimulationPlugin {
     }
 }
 
+/// Adds a set of plugins to the target world's [`App`].
+pub type PluginFactory = Arc<dyn Fn(&mut App) + Send + Sync>;
+
 /// Builds a [`Simulation`].
 #[derive(Clone, Component)]
 pub struct SimulationBuilder {
     synchronizer: EntitySynchronizer,
     startup_schedule_builder: ScheduleBuilder,
     compute_schedule_builder: ScheduleBuilder,
+    plugins: Vec<PluginFactory>,
+}
+
+impl Default for SimulationBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SimulationBuilder {
@@ -35,7 +47,18 @@ impl SimulationBuilder {
             startup_schedule_builder: ScheduleBuilder::new(SimulationStartup),
             compute_schedule_builder: ScheduleBuilder::new(SimulationComputeStep)
                 .set_ordering(SystemExecutionOrdering::Total),
+            plugins: Vec::new(),
         }
+    }
+
+    pub fn add_plugins<M>(
+        mut self,
+        plugins: impl Plugins<M> + Clone + Send + Sync + 'static,
+    ) -> Self {
+        self.plugins.push(Arc::new(move |app| {
+            app.add_plugins(plugins.clone());
+        }));
+        self
     }
 
     pub fn register_tracked_component<T: Component + Clone>(mut self) -> Self {
@@ -65,12 +88,7 @@ impl SimulationBuilder {
     }
 
     pub fn build(&self, world: &World) -> Simulation {
-        Simulation::new(
-            self.synchronizer.clone(),
-            self.startup_schedule_builder.build(),
-            self.compute_schedule_builder.build(),
-            world,
-        )
+        Simulation::new(self.clone(), world)
     }
 }
 
@@ -82,28 +100,23 @@ pub struct Simulation {
 }
 
 impl Simulation {
-    fn new(
-        synchronizer: EntitySynchronizer,
-        startup_schedule: Schedule,
-        system_schedule: Schedule,
-        world: &World,
-    ) -> Self {
-        let entities = synchronizer.extract_entities(world);
+    fn new(builder: SimulationBuilder, world: &World) -> Self {
+        let entities = builder.synchronizer.extract_entities(world);
         let init_step = SimulationInitStep {
-            commands: synchronizer.extract_components(world),
+            commands: builder.synchronizer.extract_components(world),
         };
-        let compute_init_step = init_step.clone();
         let (step_sender, step_receiver) = unbounded();
+        let compute_plugin = SimulationComputePlugin {
+            synchronizer: builder.synchronizer,
+            startup_schedule_builder: builder.startup_schedule_builder,
+            compute_schedule_builder: builder.compute_schedule_builder,
+            entities,
+            init_step: init_step.clone(),
+            step_sender,
+        };
 
         thread::spawn(move || {
-            compute_simulation(
-                startup_schedule,
-                system_schedule,
-                synchronizer,
-                entities,
-                compute_init_step,
-                step_sender,
-            );
+            compute_simulation(compute_plugin, builder.plugins);
         });
 
         Self {

@@ -36,7 +36,6 @@ pub enum SystemExecutionOrdering {
     Total,
 }
 
-// TODO: Arc is not necessary if deciding that SimulationBuilder need not be cloneable, or a component
 type ScheduleConfigFactory = Arc<dyn Fn() -> ScheduleConfigs<ScheduleSystem> + Send + Sync>;
 
 /// Builds a [`Schedule`] with a set of systems and an execution ordering policy.

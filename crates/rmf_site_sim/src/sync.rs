@@ -1,4 +1,4 @@
-use crate::compute::SimulationClock;
+use crate::compute::SimulationComputeClock;
 use crate::schedule::SimulationComputeSet;
 use crate::simulation::{ComponentChanges, SimulationCommand, SimulationStep};
 use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
@@ -69,7 +69,7 @@ impl EntitySynchronizer {
         }
         schedule.add_systems(
             SimulationCommandBuffer::flush
-                .before(SimulationClock::advance)
+                .before(SimulationComputeClock::advance)
                 .in_set(SimulationComputeSet::SendSimulationStep),
         );
     }
@@ -154,7 +154,11 @@ impl SimulationCommandBuffer {
         buffer.push(Box::new(ComponentChanges(changes)));
     }
 
-    fn flush(clock: Res<SimulationClock>, mut buffer: ResMut<Self>, sender: Res<StepSender>) {
+    fn flush(
+        clock: Res<SimulationComputeClock>,
+        mut buffer: ResMut<Self>,
+        sender: Res<StepSender>,
+    ) {
         let commands = buffer.take();
         if commands.is_empty() {
             return;
