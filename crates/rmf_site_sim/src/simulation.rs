@@ -18,8 +18,7 @@ pub struct SimulationPlugin;
 
 impl Plugin for SimulationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(bevy::app::TaskPoolPlugin::default())
-            .add_systems(Update, Simulation::update_steps);
+        app.add_systems(Update, Simulation::update_steps);
     }
 }
 
@@ -72,6 +71,14 @@ impl SimulationBuilder {
         self
     }
 
+    pub fn register_tracked_resource<T: Resource + Clone>(mut self) -> Self {
+        todo!();
+    }
+
+    pub fn register_untracked_resource<T: Resource + Clone>(mut self) -> Self {
+        todo!();
+    }
+
     pub fn add_startup_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
         self.startup_schedule_builder = self.startup_schedule_builder.add_systems(systems);
         self
@@ -86,7 +93,7 @@ impl SimulationBuilder {
 
     /// Registers a discrete event type that can be scheduled in the simulation, driving the
     /// compute clock forward to each scheduled event time.
-    pub fn register_event<T: Event>(self) -> Self {
+    pub fn register_discrete_event<T: Event>(self) -> Self {
         self.add_plugins(DiscreteEventsPlugin::<T>::default())
     }
 
@@ -140,31 +147,37 @@ impl Simulation {
     }
 }
 
+/// A single computed simulation step.
 #[derive(Clone)]
 pub struct SimulationStep {
     pub time: SimulationTime,
     pub commands: Vec<Box<dyn SimulationCommand>>,
 }
 
+// TODO: Better way to make this a distinct type, e.g. generic?
 #[derive(Clone)]
 pub struct SimulationInitStep {
     pub commands: Vec<Box<dyn SimulationCommand>>,
 }
 
 // TODO:
-// - Just enforce Command + Sync instead?
 // - This is a terrible data structure to store changes
+/// A world mutation similar to [`Command`], but requires `Send` + `Sync` instead of just `Send` to allow
+/// a simulation to be computed in a separate thread.
 pub trait SimulationCommand: Send + Sync + 'static {
     fn apply(self: Box<Self>, world: &mut World);
-    fn clone_box(&self) -> Box<dyn SimulationCommand>;
+    fn clone_to_box(&self) -> Box<dyn SimulationCommand>;
 }
 
+// TODO:
+// - Is there a better way, besides using Rc/Arc?
 impl Clone for Box<dyn SimulationCommand> {
     fn clone(&self) -> Self {
-        self.clone_box()
+        self.clone_to_box()
     }
 }
 
+/// A map of [`Entity`] to changed [`Component`] values.
 pub struct ComponentChanges<T: Component>(pub EntityHashMap<T>);
 
 impl<T: Component + Clone> SimulationCommand for ComponentChanges<T> {
@@ -176,7 +189,7 @@ impl<T: Component + Clone> SimulationCommand for ComponentChanges<T> {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn SimulationCommand> {
+    fn clone_to_box(&self) -> Box<dyn SimulationCommand> {
         Box::new(ComponentChanges(self.0.clone()))
     }
 }
