@@ -1,5 +1,7 @@
-use crate::schedule::SimulationComputeSet;
-use crate::simulation::{SimulationInitStep, SimulationStep};
+use crate::schedule::{
+    ScheduleBuilder, SimulationComputeSet, SimulationComputeStep, SimulationStartup,
+};
+use crate::simulation::{PluginFactory, SimulationInitStep, SimulationStep};
 use crate::sync::EntitySynchronizer;
 use crate::time::SimulationTime;
 use bevy::prelude::*;
@@ -8,58 +10,77 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 // TODO: Error handling, this is being executed in a separate thread.
-pub fn compute_simulation(
-    mut startup_schedule: Schedule,
-    mut system_schedule: Schedule,
-    synchronizer: EntitySynchronizer,
-    entities: Vec<Entity>,
-    init_step: SimulationInitStep,
-    step_sender: Sender<SimulationStep>,
-) {
-    let mut world = create_world(entities, init_step);
-    world.init_resource::<SimulationClock>();
-
-    system_schedule.configure_sets(
-        SimulationComputeSet::ExecuteSystems.before(SimulationComputeSet::SendSimulationStep),
-    );
-    system_schedule
-        .add_systems(SimulationClock::advance.in_set(SimulationComputeSet::SendSimulationStep));
-    synchronizer.configure_tracking(&mut world, &mut system_schedule, step_sender);
-
-    startup_schedule.run(&mut world);
-    run_systems(system_schedule, &mut world);
+pub fn compute_simulation(compute_plugin: SimulationComputePlugin, plugins: Vec<PluginFactory>) {
+    let mut app = App::new();
+    app.add_plugins(compute_plugin);
+    for plugin in &plugins {
+        plugin(&mut app);
+    }
+    app.run();
 }
 
-fn create_world(entities: Vec<Entity>, init_step: SimulationInitStep) -> World {
-    let mut world = World::new();
-    for entity in entities {
-        spawn_at(&mut world, entity);
-    }
-    for command in init_step.commands {
-        command.apply(&mut world);
-    }
-    world
+pub struct SimulationComputePlugin {
+    pub synchronizer: EntitySynchronizer,
+    pub startup_schedule_builder: ScheduleBuilder,
+    pub compute_schedule_builder: ScheduleBuilder,
+    pub entities: Vec<Entity>,
+    pub init_step: SimulationInitStep,
+    pub step_sender: Sender<SimulationStep>,
 }
 
-fn run_systems(mut system_schedule: Schedule, world: &mut World) {
+impl Plugin for SimulationComputePlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<SimulationComputeClock>();
+
+        let world = app.world_mut();
+        for entity in &self.entities {
+            spawn_at(world, *entity);
+        }
+        for command in self.init_step.commands.clone() {
+            command.apply(world);
+        }
+
+        let startup_schedule = self.startup_schedule_builder.build();
+        let mut system_schedule = self.compute_schedule_builder.build();
+        system_schedule.configure_sets(
+            SimulationComputeSet::ExecuteSystems.before(SimulationComputeSet::SendSimulationStep),
+        );
+        system_schedule.add_systems(
+            SimulationComputeClock::advance.in_set(SimulationComputeSet::SendSimulationStep),
+        );
+        self.synchronizer.configure_tracking(
+            app.world_mut(),
+            &mut system_schedule,
+            self.step_sender.clone(),
+        );
+
+        app.add_schedule(startup_schedule);
+        app.add_schedule(system_schedule);
+        app.set_runner(run_simulation);
+    }
+}
+
+fn run_simulation(mut app: App) -> AppExit {
+    app.world_mut().run_schedule(SimulationStartup);
     loop {
-        system_schedule.run(world);
+        app.world_mut().run_schedule(SimulationComputeStep);
 
         // TODO: This should be a generic trait with a builtin impl,
         // e.g. crate::simulation::EndCondition
-        if world.resource::<SimulationClock>().at_end() {
+        if app.world().resource::<SimulationComputeClock>().at_end() {
             break;
         }
     }
+    AppExit::Success
 }
 
 #[derive(Resource, Default)]
-pub struct SimulationClock {
+pub struct SimulationComputeClock {
     current: SimulationTime,
     pending: BinaryHeap<Reverse<SimulationTime>>,
 }
 
-impl SimulationClock {
+impl SimulationComputeClock {
     pub fn now(&self) -> SimulationTime {
         self.current
     }
@@ -89,9 +110,9 @@ impl SimulationClock {
         Some(time)
     }
 
-    pub fn advance(mut clock: ResMut<SimulationClock>) {
+    pub fn advance(mut clock: ResMut<SimulationComputeClock>) {
         if clock.at_end() {
-            info!("Compute clock reached end at time {:?}", clock.now());
+            debug!("Compute clock reached end at time {:?}", clock.now());
             return;
         }
 
@@ -99,7 +120,8 @@ impl SimulationClock {
     }
 }
 
-// TODO: This method is only in newer versions of Bevy.
+// TODO: This method is only in newer versions of Bevy, this is a workaround.
+// https://docs.rs/bevy/latest/bevy/prelude/struct.World.html#method.spawn_at
 fn spawn_at(world: &mut World, entity: Entity) {
     #[allow(deprecated)]
     let _ = world.insert_or_spawn_batch([(entity, ())]);
