@@ -1,4 +1,5 @@
 use crate::compute::{SimulationComputePlugin, compute_simulation};
+use crate::event::DiscreteEventsPlugin;
 use crate::schedule::{
     ScheduleBuilder, SimulationComputeSet, SimulationComputeStep, SimulationScheduleConfigs,
     SimulationStartup, SystemExecutionOrdering,
@@ -83,8 +84,10 @@ impl SimulationBuilder {
         self
     }
 
+    /// Registers a discrete event type that can be scheduled in the simulation, driving the
+    /// compute clock forward to each scheduled event time.
     pub fn register_event<T: Event>(self) -> Self {
-        todo!()
+        self.add_plugins(DiscreteEventsPlugin::<T>::default())
     }
 
     pub fn build(&self, world: &World) -> Simulation {

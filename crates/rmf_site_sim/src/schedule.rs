@@ -17,6 +17,7 @@ pub struct SimulationComputeStep;
 pub enum SimulationComputeSet {
     ExecuteSystems,
     SendSimulationStep,
+    IncrementComputeClock,
 }
 
 pub trait SimulationScheduleConfigs<M>:
