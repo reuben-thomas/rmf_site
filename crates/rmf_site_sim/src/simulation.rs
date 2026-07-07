@@ -22,9 +22,6 @@ impl Plugin for SimulationPlugin {
     }
 }
 
-/// Adds a set of plugins to the target world's [`App`].
-pub type PluginFactory = Arc<dyn Fn(&mut App) + Send + Sync>;
-
 /// Builds a [`Simulation`].
 #[derive(Clone, Component)]
 pub struct SimulationBuilder {
@@ -40,6 +37,7 @@ impl Default for SimulationBuilder {
     }
 }
 
+/// Builder for creating a [`Simulation`].
 impl SimulationBuilder {
     pub fn new() -> Self {
         Self {
@@ -51,6 +49,7 @@ impl SimulationBuilder {
         }
     }
 
+    /// Adds a plugin to the simulation [`SubApp`].
     pub fn add_plugins<M>(
         mut self,
         plugins: impl Plugins<M> + Clone + Send + Sync + 'static,
@@ -61,29 +60,41 @@ impl SimulationBuilder {
         self
     }
 
+    /// Registers a tracked component.
+    /// Changes to a tracked component will be tracked, and captured in [`Simulation`].
     pub fn register_tracked_component<T: Component + Clone>(mut self) -> Self {
         self.synchronizer.register_tracked::<T>();
         self
     }
 
+    /// Registers an untracked component.
+    /// Changes to an untracked component will not be tracked, and will not be captured in [`Simulation`].
     pub fn register_untracked_component<T: Component + Clone>(mut self) -> Self {
         self.synchronizer.register_untracked::<T>();
         self
     }
 
-    pub fn register_tracked_resource<T: Resource + Clone>(mut self) -> Self {
+    /// Registers a tracked resource.
+    /// Changes to a tracked resource will be tracked, and captured in [`Simulation`].
+    pub fn register_tracked_resource<T: Resource + Clone>(self) -> Self {
         todo!();
     }
 
-    pub fn register_untracked_resource<T: Resource + Clone>(mut self) -> Self {
+    /// Registers an untracked resource.
+    /// Changes to an untracked resource will not be tracked, and will not be captured in [`Simulation`].
+    pub fn register_untracked_resource<T: Resource + Clone>(self) -> Self {
         todo!();
     }
 
+    /// Adds a set of systems to be executed during simulation startup.
     pub fn add_startup_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
         self.startup_schedule_builder = self.startup_schedule_builder.add_systems(systems);
         self
     }
 
+    // TODO: Rename to add_model_systems instead?
+    /// Adds a set of systems to be executed when computing simulation steps.
+    /// These systems should represent models in the discrete event simulation.
     pub fn add_compute_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
         self.compute_schedule_builder = self
             .compute_schedule_builder
@@ -97,11 +108,13 @@ impl SimulationBuilder {
         self.add_plugins(DiscreteEventsPlugin::<T>::default())
     }
 
+    /// Builds a new [`Simulation`].
     pub fn build(&self, world: &World) -> Simulation {
         Simulation::new(self.clone(), world)
     }
 }
 
+/// A unique discrete event simulation.
 #[derive(Component)]
 pub struct Simulation {
     init_step: SimulationInitStep,
@@ -110,6 +123,7 @@ pub struct Simulation {
 }
 
 impl Simulation {
+    // TODO: Should extract be performed explicitly? e.g. Simulation::extract, Simulation::compute
     fn new(builder: SimulationBuilder, world: &World) -> Self {
         let entities = builder.synchronizer.extract_entities(world);
         let init_step = SimulationInitStep {
@@ -136,15 +150,18 @@ impl Simulation {
         }
     }
 
+    /// The initial step of the simulation, which can be used to reset to the simulation's initial state.
     pub fn init_step(&self) -> &SimulationInitStep {
         &self.init_step
     }
 
+    /// The computed simulation steps, in order of execution.
     pub fn steps(&self) -> &[SimulationStep] {
         &self.simulation_steps
     }
 
     // TODO: Time bound this system in order to avoid delaying the main app.
+    /// Updates the simulation steps from the step receiver.
     fn update_steps(mut simulations: Query<&mut Simulation>) {
         for mut simulation in &mut simulations {
             let simulation = &mut *simulation;
@@ -155,6 +172,9 @@ impl Simulation {
     }
 }
 
+// TODO:
+// - Perhaps handle world mutations directly in a step
+// - Possibly better as a generic, e.g. SimulationStep<Init>, SimulationStep<Update>
 /// A single computed simulation step.
 #[derive(Clone)]
 pub struct SimulationStep {
@@ -162,7 +182,7 @@ pub struct SimulationStep {
     pub commands: Vec<Box<dyn SimulationCommand>>,
 }
 
-// TODO: Better way to make this a distinct type, e.g. generic?
+/// A simulation step that that captures the initial state of the simulation
 #[derive(Clone)]
 pub struct SimulationInitStep {
     pub commands: Vec<Box<dyn SimulationCommand>>,
@@ -170,15 +190,16 @@ pub struct SimulationInitStep {
 
 // TODO:
 // - This is a terrible data structure to store changes
-/// A world mutation similar to [`Command`], but requires `Send` + `Sync` instead of just `Send` to allow
-/// a simulation to be computed in a separate thread.
+/// A world mutation similar to [`Command`].
+/// Unlike [`Command`], this trait requires `Send` + `Sync` instead of just `Send` to allow a simulation to be computed in a separate thread.
 pub trait SimulationCommand: Send + Sync + 'static {
+    /// Applies the command to the world.
     fn apply(self: Box<Self>, world: &mut World);
+
+    /// Clones into a boxed object.
     fn clone_to_box(&self) -> Box<dyn SimulationCommand>;
 }
 
-// TODO:
-// - Is there a better way, besides using Rc/Arc?
 impl Clone for Box<dyn SimulationCommand> {
     fn clone(&self) -> Self {
         self.clone_to_box()
@@ -201,3 +222,6 @@ impl<T: Component + Clone> SimulationCommand for ComponentChanges<T> {
         Box::new(ComponentChanges(self.0.clone()))
     }
 }
+
+/// Adds one or more plugins to the target world's [`App`].
+pub type PluginFactory = Arc<dyn Fn(&mut App) + Send + Sync>;
