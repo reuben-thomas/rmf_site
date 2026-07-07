@@ -7,11 +7,13 @@ use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::ops::Bound;
 
+/// An event that occurs at a discrete simulation time.
 pub struct DiscreteEvent<T: Event> {
     pub time: SimulationTime,
     pub event: T,
 }
 
+/// A resource that holds discrete events to be processed at specific simulation times.
 #[derive(Resource)]
 pub struct DiscreteEvents<T: Event>(BTreeMap<SimulationTime, Vec<DiscreteEvent<T>>>);
 
@@ -26,6 +28,7 @@ impl<T: Event> DiscreteEvents<T> {
         Self::default()
     }
 
+    /// Schedules an event to occur at the given time.
     fn schedule(&mut self, time: SimulationTime, event: T) {
         self.0
             .entry(time)
@@ -33,6 +36,7 @@ impl<T: Event> DiscreteEvents<T> {
             .push(DiscreteEvent { time, event });
     }
 
+    /// The next time after the specified time for which an event exists.
     fn next_time_after(&self, time: SimulationTime) -> Option<SimulationTime> {
         self.0
             .range((Bound::Excluded(time), Bound::Unbounded))
@@ -40,26 +44,30 @@ impl<T: Event> DiscreteEvents<T> {
             .map(|(t, _)| *t)
     }
 
+    /// Returns the events that occur at a specified time.
     fn events_at(&self, time: SimulationTime) -> Option<&Vec<DiscreteEvent<T>>> {
         self.0.get(&time)
     }
 
-    fn drain_events_up_to(&mut self, time: SimulationTime) {
+    // TODO: Make efficient
+    /// Drains events before the specified time.
+    fn drain_events_before(&mut self, time: SimulationTime) {
         self.0.retain(|&t, _| t >= time);
     }
 
-    /// Drains passed events, and adds the next available event to the clock.
+    /// Drains events before the current clock time, and adds the next available event to the clock.
     fn sync_with_clock(
         mut events: ResMut<DiscreteEvents<T>>,
         mut clock: ResMut<SimulationComputeClock>,
     ) {
-        events.drain_events_up_to(clock.now());
+        events.drain_events_before(clock.now());
         if let Some(time) = events.next_time_after(clock.now()) {
-            clock.add(time);
+            clock.try_add_pending(time);
         }
     }
 }
 
+/// Sends discrete events of type `T`.
 #[derive(SystemParam)]
 pub struct DiscreteEventWriter<'w, 's, T: Event> {
     buffer: Deferred<'s, DiscreteEventWriteBuffer<T>>,
@@ -100,6 +108,7 @@ impl<T: Event> SystemBuffer for DiscreteEventWriteBuffer<T> {
     }
 }
 
+/// Reads discrete events of type `T`.
 #[derive(SystemParam)]
 pub struct DiscreteEventReader<'w, T: Event> {
     events: Res<'w, DiscreteEvents<T>>,
@@ -117,6 +126,7 @@ impl<T: Event> DiscreteEventReader<'_, T> {
     }
 }
 
+/// Plugin for enabling functionality of discrete events of type `T`.
 pub struct DiscreteEventsPlugin<T: Event>(PhantomData<T>);
 
 impl<T: Event> Default for DiscreteEventsPlugin<T> {

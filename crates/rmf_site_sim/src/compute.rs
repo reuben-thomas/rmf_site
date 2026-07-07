@@ -9,6 +9,7 @@ use crossbeam_channel::Sender;
 use std::collections::BTreeSet;
 
 // TODO: Error handling, this is being executed in a separate thread.
+/// Computes [`SimulationStep`]s for a simulation.
 pub fn compute_simulation(compute_plugin: SimulationComputePlugin, plugins: Vec<PluginFactory>) {
     let mut app = App::new();
     app.add_plugins(compute_plugin);
@@ -18,6 +19,7 @@ pub fn compute_simulation(compute_plugin: SimulationComputePlugin, plugins: Vec<
     app.run();
 }
 
+/// Plugin that computes [`SimulationStep`]s for a simulation.
 pub struct SimulationComputePlugin {
     pub synchronizer: EntitySynchronizer,
     pub startup_schedule_builder: ScheduleBuilder,
@@ -61,11 +63,11 @@ impl Plugin for SimulationComputePlugin {
 
         app.add_schedule(startup_schedule);
         app.add_schedule(system_schedule);
-        app.set_runner(run_simulation);
+        app.set_runner(run_compute_simulation);
     }
 }
 
-fn run_simulation(mut app: App) -> AppExit {
+fn run_compute_simulation(mut app: App) -> AppExit {
     app.world_mut().run_schedule(SimulationStartup);
     loop {
         app.world_mut().run_schedule(SimulationComputeStep);
@@ -83,6 +85,7 @@ fn run_simulation(mut app: App) -> AppExit {
     AppExit::Success
 }
 
+/// Clock for tracking the current simulation time being computed, as well as pending times to be processed.
 #[derive(Resource, Default)]
 pub struct SimulationComputeClock {
     current: SimulationTime,
@@ -91,31 +94,39 @@ pub struct SimulationComputeClock {
 }
 
 impl SimulationComputeClock {
+    /// The current simulation time.
     pub fn now(&self) -> SimulationTime {
         self.current
     }
 
-    pub fn add(&mut self, time: SimulationTime) {
-        // TODO: Better error handling than panicking
+    /// Adds a pending time to be processed.
+    ///
+    /// Returns whether a new pending time was added.
+    pub fn try_add_pending(&mut self, time: SimulationTime) -> bool {
         if time <= self.current {
             panic!(
                 "Tried to add time {time:?} that is not greater than the current time {:?}.",
                 self.now()
             )
         }
-        self.pending.insert(time);
+        self.pending.insert(time)
     }
 
+    /// Whether all pending times have been processed.
     fn is_complete(&self) -> bool {
         self.is_complete
     }
 
-    fn next(&mut self) -> Option<SimulationTime> {
-        let time = self.pending.pop_first()?;
+    /// Ticks the clock to the next pending time.
+    fn tick(&mut self) {
+        let time = self
+            .pending
+            .pop_first()
+            .expect("No pending times to increment");
         self.current = time;
-        Some(time)
     }
 
+    /// System to advance the compute clock to the next pending time, if one exists.
     pub fn advance(mut clock: ResMut<SimulationComputeClock>) {
         if clock.pending.is_empty() {
             debug!("Compute clock reached end at time {:?}", clock.now());
@@ -123,7 +134,7 @@ impl SimulationComputeClock {
             return;
         }
 
-        clock.next();
+        clock.tick();
     }
 }
 

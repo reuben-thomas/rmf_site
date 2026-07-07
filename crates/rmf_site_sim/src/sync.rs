@@ -138,6 +138,9 @@ impl SimulationCommandBuffer {
         std::mem::take(&mut self.0)
     }
 
+    // TODO:
+    // - verify change with partialeq
+    // - store a full snapshot every x steps
     fn buffer_changes<T: Component + Clone>(
         changed: Query<(Entity, &T), Changed<T>>,
         mut buffer: ResMut<Self>,
