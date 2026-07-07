@@ -136,6 +136,14 @@ impl Simulation {
         }
     }
 
+    pub fn init_step(&self) -> &SimulationInitStep {
+        &self.init_step
+    }
+
+    pub fn steps(&self) -> &[SimulationStep] {
+        &self.simulation_steps
+    }
+
     // TODO: Time bound this system in order to avoid delaying the main app.
     fn update_steps(mut simulations: Query<&mut Simulation>) {
         for mut simulation in &mut simulations {
