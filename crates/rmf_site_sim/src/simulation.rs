@@ -4,7 +4,7 @@ use crate::schedule::{
     ScheduleBuilder, SimulationComputeSet, SimulationComputeStep, SimulationScheduleConfigs,
     SimulationStartup, SystemExecutionOrdering,
 };
-use crate::sync::EntitySynchronizer;
+use crate::sync::Synchronizer;
 use crate::time::SimulationTime;
 use bevy::app::Plugins;
 use bevy::ecs::entity::EntityHashMap;
@@ -25,7 +25,7 @@ impl Plugin for SimulationPlugin {
 /// Builds a [`Simulation`].
 #[derive(Clone, Component)]
 pub struct SimulationBuilder {
-    synchronizer: EntitySynchronizer,
+    synchronizer: Synchronizer,
     startup_schedule_builder: ScheduleBuilder,
     compute_schedule_builder: ScheduleBuilder,
     plugins: Vec<PluginFactory>,
@@ -38,10 +38,13 @@ impl Default for SimulationBuilder {
 }
 
 /// Builder for creating a [`Simulation`].
+///
+/// All registererd resources and components, as well as their corresponding entities are extracted into the simulation world.
+/// Only tracked components and resources are tracked for changes and sent as a [`SimulationStep`] to the main world.
 impl SimulationBuilder {
     pub fn new() -> Self {
         Self {
-            synchronizer: EntitySynchronizer::default(),
+            synchronizer: Synchronizer::default(),
             startup_schedule_builder: ScheduleBuilder::new(SimulationStartup),
             compute_schedule_builder: ScheduleBuilder::new(SimulationComputeStep)
                 .set_ordering(SystemExecutionOrdering::Total),
@@ -61,29 +64,27 @@ impl SimulationBuilder {
     }
 
     /// Registers a tracked component.
-    /// Changes to a tracked component will be tracked, and captured in [`Simulation`].
     pub fn register_tracked_component<T: Component + Clone>(mut self) -> Self {
         self.synchronizer.register_tracked::<T>();
         self
     }
 
     /// Registers an untracked component.
-    /// Changes to an untracked component will not be tracked, and will not be captured in [`Simulation`].
     pub fn register_untracked_component<T: Component + Clone>(mut self) -> Self {
         self.synchronizer.register_untracked::<T>();
         self
     }
 
     /// Registers a tracked resource.
-    /// Changes to a tracked resource will be tracked, and captured in [`Simulation`].
-    pub fn register_tracked_resource<T: Resource + Clone>(self) -> Self {
-        todo!();
+    pub fn register_tracked_resource<T: Resource + Clone>(mut self) -> Self {
+        self.synchronizer.register_tracked_resource::<T>();
+        self
     }
 
     /// Registers an untracked resource.
-    /// Changes to an untracked resource will not be tracked, and will not be captured in [`Simulation`].
-    pub fn register_untracked_resource<T: Resource + Clone>(self) -> Self {
-        todo!();
+    pub fn register_untracked_resource<T: Resource + Clone>(mut self) -> Self {
+        self.synchronizer.register_untracked_resource::<T>();
+        self
     }
 
     /// Adds a set of systems to be executed during simulation startup.
@@ -126,9 +127,9 @@ impl Simulation {
     // TODO: Should extract be performed explicitly? e.g. Simulation::extract, Simulation::compute
     fn new(builder: SimulationBuilder, world: &World) -> Self {
         let entities = builder.synchronizer.extract_entities(world);
-        let init_step = SimulationInitStep {
-            commands: builder.synchronizer.extract_components(world),
-        };
+        let mut commands = builder.synchronizer.extract_components(world);
+        commands.extend(builder.synchronizer.extract_resources(world));
+        let init_step = SimulationInitStep { commands };
         let (step_sender, step_receiver) = unbounded();
         let compute_plugin = SimulationComputePlugin {
             synchronizer: builder.synchronizer,
@@ -188,8 +189,7 @@ pub struct SimulationInitStep {
     pub commands: Vec<Box<dyn SimulationCommand>>,
 }
 
-// TODO:
-// - This is a terrible data structure to store changes
+// TODO: This data structure is inefficient for storing changes, since unique changes are all stored in closures.
 /// A world mutation similar to [`Command`].
 /// Unlike [`Command`], this trait requires `Send` + `Sync` instead of just `Send` to allow a simulation to be computed in a separate thread.
 pub trait SimulationCommand: Send + Sync + 'static {
@@ -220,6 +220,19 @@ impl<T: Component + Clone> SimulationCommand for ComponentChanges<T> {
 
     fn clone_to_box(&self) -> Box<dyn SimulationCommand> {
         Box::new(ComponentChanges(self.0.clone()))
+    }
+}
+
+/// A changed [`Resource`] value.
+pub struct ResourceChanges<T: Resource>(pub T);
+
+impl<T: Resource + Clone> SimulationCommand for ResourceChanges<T> {
+    fn apply(self: Box<Self>, world: &mut World) {
+        world.insert_resource(self.0);
+    }
+
+    fn clone_to_box(&self) -> Box<dyn SimulationCommand> {
+        Box::new(ResourceChanges(self.0.clone()))
     }
 }
 

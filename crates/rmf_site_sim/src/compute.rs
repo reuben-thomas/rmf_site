@@ -2,7 +2,7 @@ use crate::schedule::{
     ScheduleBuilder, SimulationComputeSet, SimulationComputeStep, SimulationStartup,
 };
 use crate::simulation::{PluginFactory, SimulationInitStep, SimulationStep};
-use crate::sync::EntitySynchronizer;
+use crate::sync::Synchronizer;
 use crate::time::SimulationTime;
 use bevy::prelude::*;
 use crossbeam_channel::Sender;
@@ -21,7 +21,7 @@ pub fn compute_simulation(compute_plugin: SimulationComputePlugin, plugins: Vec<
 
 /// Plugin that computes [`SimulationStep`]s for a simulation.
 pub struct SimulationComputePlugin {
-    pub synchronizer: EntitySynchronizer,
+    pub synchronizer: Synchronizer,
     pub startup_schedule_builder: ScheduleBuilder,
     pub compute_schedule_builder: ScheduleBuilder,
     pub entities: Vec<Entity>,
