@@ -1,39 +1,57 @@
 use crate::compute::SimulationComputeClock;
 use crate::schedule::SimulationComputeSet;
-use crate::simulation::{ComponentChanges, SimulationCommand, SimulationStep};
+use crate::simulation::{ComponentChanges, ResourceChanges, SimulationCommand, SimulationStep};
 use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
 use bevy::ecs::schedule::ScheduleConfigs;
 use bevy::ecs::system::ScheduleSystem;
 use bevy::prelude::*;
 use crossbeam_channel::Sender;
 
+/// Synchronizes entities, components, and resources between the main and simulation world.
+///
+/// All registererd resources and components, as well as their corresponding entities are extracted into the simulation world.
+/// Only tracked components and resources are tracked for changes and sent as a [`SimulationStep`] to the main world.
 #[derive(Default, Clone)]
-pub struct EntitySynchronizer {
-    synchronizers: Vec<ComponentSynchronizer>,
+pub struct Synchronizer {
+    component_synchronizers: Vec<ComponentSynchronizer>,
+    resource_synchronizers: Vec<ResourceSynchronizer>,
 }
 
-impl EntitySynchronizer {
-    /// Registers a component that should be extracted to the simulation world,
-    /// but should not be tracked in a [`SimulationStep`] sent to the main world.
+impl Synchronizer {
+    /// Registers a component to extract without tracking changes.
     pub fn register_untracked<T: Component + Clone>(&mut self) {
         self.register_component::<T, false>();
     }
-    /// Registers a component that should be extracted to the simulation world,
-    /// and should be tracked in a [`SimulationStep`] sent to the main world.
+    /// Registers a component to extract and track changes.
     pub fn register_tracked<T: Component + Clone>(&mut self) {
         self.register_component::<T, true>();
     }
 
     // TODO: What if register_component is called twice for the same type?
     fn register_component<T: Component + Clone, const TRACKED: bool>(&mut self) {
-        self.synchronizers
+        self.component_synchronizers
             .push(ComponentSynchronizer::new::<T, TRACKED>());
+    }
+
+    /// Registers a resource to extract without tracking changes.
+    pub fn register_untracked_resource<T: Resource + Clone>(&mut self) {
+        self.register_resource::<T, false>();
+    }
+
+    /// Registers a resource to extract and track changes.
+    pub fn register_tracked_resource<T: Resource + Clone>(&mut self) {
+        self.register_resource::<T, true>();
+    }
+
+    fn register_resource<T: Resource + Clone, const TRACKED: bool>(&mut self) {
+        self.resource_synchronizers
+            .push(ResourceSynchronizer::new::<T, TRACKED>());
     }
 
     /// Extracts all entities that should be synchronized.
     pub fn extract_entities(&self, world: &World) -> Vec<Entity> {
         let mut entities = EntityHashSet::default();
-        for synchronizer in &self.synchronizers {
+        for synchronizer in &self.component_synchronizers {
             (synchronizer.extract_entities)(world, &mut entities);
         }
         entities.into_iter().collect()
@@ -41,9 +59,17 @@ impl EntitySynchronizer {
 
     /// Extracts all components that should be synchronized.
     pub fn extract_components(&self, world: &World) -> Vec<Box<dyn SimulationCommand>> {
-        self.synchronizers
+        self.component_synchronizers
             .iter()
             .map(|synchronizer| (synchronizer.extract_components)(world))
+            .collect()
+    }
+
+    /// Extracts all resources that should be synchronized.
+    pub fn extract_resources(&self, world: &World) -> Vec<Box<dyn SimulationCommand>> {
+        self.resource_synchronizers
+            .iter()
+            .filter_map(|synchronizer| (synchronizer.extract_resource)(world))
             .collect()
     }
 
@@ -57,7 +83,16 @@ impl EntitySynchronizer {
         world.init_resource::<SimulationCommandBuffer>();
         world.insert_resource(StepSender::new(step_sender));
 
-        for synchronizer in &self.synchronizers {
+        for synchronizer in &self.component_synchronizers {
+            if let Some(tracking_system) = synchronizer.tracking_system {
+                schedule.add_systems(
+                    tracking_system()
+                        .before(SimulationCommandBuffer::send_step)
+                        .in_set(SimulationComputeSet::SendSimulationStep),
+                );
+            }
+        }
+        for synchronizer in &self.resource_synchronizers {
             if let Some(tracking_system) = synchronizer.tracking_system {
                 schedule.add_systems(
                     tracking_system()
@@ -102,7 +137,30 @@ impl ComponentSynchronizer {
             },
             // TODO: More idiomatic way to do constexpr?
             tracking_system: if TRACKED {
-                Some(|| SimulationCommandBuffer::buffer_changes::<T>.into_configs())
+                Some(|| SimulationCommandBuffer::buffer_component_changes::<T>.into_configs())
+            } else {
+                None
+            },
+        }
+    }
+}
+
+/// A synchronizer for a single resource type.
+#[derive(Clone, Copy)]
+struct ResourceSynchronizer {
+    extract_resource: fn(&World) -> Option<Box<dyn SimulationCommand>>,
+    tracking_system: Option<fn() -> ScheduleConfigs<ScheduleSystem>>,
+}
+
+impl ResourceSynchronizer {
+    fn new<T: Resource + Clone, const TRACKED: bool>() -> Self {
+        Self {
+            extract_resource: |world| {
+                let value = world.get_resource::<T>()?.clone();
+                Some(Box::new(ResourceChanges(value)))
+            },
+            tracking_system: if TRACKED {
+                Some(|| SimulationCommandBuffer::buffer_resource_changes::<T>.into_configs())
             } else {
                 None
             },
@@ -139,9 +197,9 @@ impl SimulationCommandBuffer {
     }
 
     // TODO:
-    // - verify change with partialeq
+    // - verify change with partialeq to avoid mistaken triggers from `Query.mut()`
     // - store a full snapshot every x steps
-    fn buffer_changes<T: Component + Clone>(
+    fn buffer_component_changes<T: Component + Clone>(
         changed: Query<(Entity, &T), Changed<T>>,
         mut buffer: ResMut<Self>,
     ) {
@@ -154,6 +212,20 @@ impl SimulationCommandBuffer {
         }
 
         buffer.push(Box::new(ComponentChanges(changes)));
+    }
+
+    fn buffer_resource_changes<T: Resource + Clone>(
+        resource: Option<Res<T>>,
+        mut buffer: ResMut<Self>,
+    ) {
+        let Some(resource) = resource else {
+            return;
+        };
+        if !resource.is_changed() {
+            return;
+        }
+
+        buffer.push(Box::new(ResourceChanges(resource.clone())));
     }
 
     fn send_step(
