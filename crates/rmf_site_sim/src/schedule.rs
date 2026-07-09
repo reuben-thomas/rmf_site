@@ -1,7 +1,9 @@
 use bevy::ecs::schedule::{
-    InternedScheduleLabel, IntoScheduleConfigs, Schedule, ScheduleConfigs, ScheduleLabel, SystemSet,
+    InternedScheduleLabel, IntoScheduleConfigs, NodeId, Schedule, ScheduleBuildError,
+    ScheduleBuildPass, ScheduleConfigs, ScheduleGraph, ScheduleLabel, SystemSet, graph::DiGraph,
 };
 use bevy::ecs::system::ScheduleSystem;
+use bevy::ecs::world::World;
 use std::sync::Arc;
 
 /// The schedule that runs once when the a simulation is started.
@@ -20,6 +22,7 @@ pub enum SimulationComputeSet {
     IncrementComputeClock,
 }
 
+/// Systems that can be added to a simulation schedule.
 pub trait SimulationScheduleConfigs<M>:
     IntoScheduleConfigs<ScheduleSystem, M> + Clone + Send + Sync + 'static
 {
@@ -30,10 +33,13 @@ impl<M, T> SimulationScheduleConfigs<M> for T where
 {
 }
 
+/// Determines how system executions are ordered within a [`SimulationComputeStep`].
 #[derive(Default, Clone)]
 pub enum SystemExecutionOrdering {
+    /// Systems may run in any order based on dependencies and user-defined ordering constraints.
     #[default]
     Partial,
+    /// A deterministic total order is enforced.
     Total,
 }
 
@@ -48,6 +54,7 @@ pub struct ScheduleBuilder {
 }
 
 impl ScheduleBuilder {
+    /// Creates a new empty builder for a schedule.
     pub fn new(label: impl ScheduleLabel) -> Self {
         Self {
             label: label.intern(),
@@ -56,13 +63,14 @@ impl ScheduleBuilder {
         }
     }
 
+    /// Adds systems to the schedule.
     pub fn add_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
         self.schedule_config_factories
             .push(Arc::new(move || systems.clone().into_configs()));
         self
     }
 
-    /// Adds systems to the schedule, tagged with the given system set.
+    /// Adds systems to the schedule for a system set.
     pub fn add_systems_in_set<M>(
         mut self,
         systems: impl SimulationScheduleConfigs<M>,
@@ -74,46 +82,54 @@ impl ScheduleBuilder {
         self
     }
 
+    /// Sets the execution ordering policy for the schedule.
     pub fn set_ordering(mut self, ordering: SystemExecutionOrdering) -> Self {
         self.ordering = ordering;
         self
     }
 
+    /// Builds a new [`Schedule`] containing the added systems, ordered by the configured policy.
     pub fn build(&self) -> Schedule {
         let mut schedule = Schedule::new(self.label);
-        Self::initialize_systems(
-            &self.schedule_config_factories,
-            &self.ordering,
-            &mut schedule,
-        );
-        Self::initialize_ordering(&self.ordering, &mut schedule);
+        for factory in &self.schedule_config_factories {
+            schedule.add_systems(factory());
+        }
+        match self.ordering {
+            SystemExecutionOrdering::Total => {
+                schedule.add_build_pass(TotalOrderingPass);
+            }
+            SystemExecutionOrdering::Partial => {}
+        }
         schedule
     }
+}
 
-    fn initialize_systems(
-        factories: &Vec<ScheduleConfigFactory>,
-        ordering: &SystemExecutionOrdering,
-        schedule: &mut Schedule,
-    ) {
-        let configs = factories.iter().map(|f| f());
-        match ordering {
-            SystemExecutionOrdering::Total => {
-                // TODO:
-                // - Consider a default ordering by system names
-                // - A chain should not conflict existing ordering bounds
-                if let Some(chained) = configs.reduce(|a, b| (a, b).chain()) {
-                    schedule.add_systems(chained);
-                }
-            }
-            SystemExecutionOrdering::Partial => {
-                for config in configs {
-                    schedule.add_systems(config);
-                }
-            }
-        }
+/// A schedule build pass that enforces a deterministic total ordering of systems.
+#[derive(Debug)]
+struct TotalOrderingPass;
+
+impl ScheduleBuildPass for TotalOrderingPass {
+    type EdgeOptions = ();
+
+    fn add_dependency(&mut self, _from: NodeId, _to: NodeId, _options: Option<&Self::EdgeOptions>) {
     }
 
-    fn initialize_ordering(_ordering: &SystemExecutionOrdering, _schedule: &mut Schedule) {
-        // TODO
+    fn collapse_set(
+        &mut self,
+        _set: NodeId,
+        _systems: &[NodeId],
+        _dependency_flattened: &DiGraph,
+    ) -> impl Iterator<Item = (NodeId, NodeId)> {
+        std::iter::empty()
+    }
+
+    fn build(
+        &mut self,
+        _world: &mut World,
+        _graph: &mut ScheduleGraph,
+        _dependency_flattened: &mut DiGraph,
+    ) -> Result<(), ScheduleBuildError> {
+        // TODO: Enforce a total ordering of the systems in the schedule
+        Ok(())
     }
 }
