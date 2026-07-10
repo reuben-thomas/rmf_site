@@ -1,9 +1,11 @@
 use bevy::ecs::schedule::{
     InternedScheduleLabel, IntoScheduleConfigs, NodeId, Schedule, ScheduleBuildError,
-    ScheduleBuildPass, ScheduleConfigs, ScheduleGraph, ScheduleLabel, SystemSet, graph::DiGraph,
+    ScheduleBuildPass, ScheduleConfigs, ScheduleGraph, ScheduleLabel, SystemSet,
+    graph::{DiGraph, Direction},
 };
 use bevy::ecs::system::ScheduleSystem;
 use bevy::ecs::world::World;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// The schedule that runs once when the a simulation is started.
@@ -126,10 +128,63 @@ impl ScheduleBuildPass for TotalOrderingPass {
     fn build(
         &mut self,
         _world: &mut World,
-        _graph: &mut ScheduleGraph,
-        _dependency_flattened: &mut DiGraph,
+        graph: &mut ScheduleGraph,
+        dependency_flattened: &mut DiGraph,
     ) -> Result<(), ScheduleBuildError> {
-        // TODO: Enforce a total ordering of the systems in the schedule
+        println!("Hierarchy graph: {:?}", graph.hierarchy().graph());
+        println!(
+            "Hierarchy topsort: {:?}",
+            graph.hierarchy().cached_topsort()
+        );
+        println!("Dependency graph: {:?}", graph.dependency().graph());
+        println!(
+            "Dependency topsort: {:?}",
+            graph.dependency().cached_topsort()
+        );
+
+        let systems: Vec<(NodeId, &ScheduleSystem)> = graph
+            .systems()
+            .map(|(id, system, _)| (id, system))
+            .collect();
+
+        let reachable: HashMap<NodeId, HashSet<NodeId>> = systems
+            .iter()
+            .map(|&(id, _)| (id, reachable_from(dependency_flattened, id)))
+            .collect();
+
+        for (i, &(a, system_a)) in systems.iter().enumerate() {
+            for &(b, system_b) in &systems[i + 1..] {
+                if reachable[&a].contains(&b) || reachable[&b].contains(&a) {
+                    continue;
+                }
+                let conflicting = system_a.is_exclusive()
+                    || system_b.is_exclusive()
+                    || !system_a
+                        .component_access()
+                        .is_compatible(system_b.component_access());
+                if conflicting {
+                    println!(
+                        "Conflicting systems: {} and {}",
+                        system_a.name(),
+                        system_b.name()
+                    );
+                }
+            }
+        }
+
         Ok(())
     }
+}
+
+fn reachable_from(graph: &DiGraph, start: NodeId) -> HashSet<NodeId> {
+    let mut visited = HashSet::new();
+    let mut stack = vec![start];
+    while let Some(node) = stack.pop() {
+        for next in graph.neighbors_directed(node, Direction::Outgoing) {
+            if visited.insert(next) {
+                stack.push(next);
+            }
+        }
+    }
+    visited
 }
