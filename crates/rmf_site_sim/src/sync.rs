@@ -1,6 +1,7 @@
 use crate::compute::SimulationComputeClock;
+use crate::event::DiscreteEvent;
 use crate::schedule::SimulationComputeSet;
-use crate::simulation::{ComponentChanges, ResourceChanges, SimulationCommand, SimulationStep};
+use crate::simulation::SimulationStep;
 use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
 use bevy::ecs::schedule::ScheduleConfigs;
 use bevy::ecs::system::ScheduleSystem;
@@ -58,7 +59,7 @@ impl Synchronizer {
     }
 
     /// Extracts all components that should be synchronized.
-    pub fn extract_components(&self, world: &World) -> Vec<Box<dyn SimulationCommand>> {
+    pub fn extract_components(&self, world: &World) -> Vec<Box<dyn DiscreteEvent>> {
         self.component_synchronizers
             .iter()
             .map(|synchronizer| (synchronizer.extract_components)(world))
@@ -66,7 +67,7 @@ impl Synchronizer {
     }
 
     /// Extracts all resources that should be synchronized.
-    pub fn extract_resources(&self, world: &World) -> Vec<Box<dyn SimulationCommand>> {
+    pub fn extract_resources(&self, world: &World) -> Vec<Box<dyn DiscreteEvent>> {
         self.resource_synchronizers
             .iter()
             .filter_map(|synchronizer| (synchronizer.extract_resource)(world))
@@ -80,14 +81,14 @@ impl Synchronizer {
         schedule: &mut Schedule,
         step_sender: Sender<SimulationStep>,
     ) {
-        world.init_resource::<SimulationCommandBuffer>();
+        world.init_resource::<SimulationStepBuffer>();
         world.insert_resource(StepSender::new(step_sender));
 
         for synchronizer in &self.component_synchronizers {
             if let Some(tracking_system) = synchronizer.tracking_system {
                 schedule.add_systems(
                     tracking_system()
-                        .before(SimulationCommandBuffer::send_step)
+                        .before(SimulationStepBuffer::send_step)
                         .in_set(SimulationComputeSet::SendSimulationStep),
                 );
             }
@@ -96,13 +97,13 @@ impl Synchronizer {
             if let Some(tracking_system) = synchronizer.tracking_system {
                 schedule.add_systems(
                     tracking_system()
-                        .before(SimulationCommandBuffer::send_step)
+                        .before(SimulationStepBuffer::send_step)
                         .in_set(SimulationComputeSet::SendSimulationStep),
                 );
             }
         }
         schedule.add_systems(
-            SimulationCommandBuffer::send_step
+            SimulationStepBuffer::send_step
                 .before(SimulationComputeClock::advance)
                 .in_set(SimulationComputeSet::SendSimulationStep),
         );
@@ -113,7 +114,7 @@ impl Synchronizer {
 #[derive(Clone, Copy)]
 struct ComponentSynchronizer {
     extract_entities: fn(&World, &mut EntityHashSet),
-    extract_components: fn(&World) -> Box<dyn SimulationCommand>,
+    extract_components: fn(&World) -> Box<dyn DiscreteEvent>,
     tracking_system: Option<fn() -> ScheduleConfigs<ScheduleSystem>>,
 }
 
@@ -137,7 +138,7 @@ impl ComponentSynchronizer {
             },
             // TODO: More idiomatic way to do constexpr?
             tracking_system: if TRACKED {
-                Some(|| SimulationCommandBuffer::buffer_component_changes::<T>.into_configs())
+                Some(|| SimulationStepBuffer::buffer_component_changes::<T>.into_configs())
             } else {
                 None
             },
@@ -148,7 +149,7 @@ impl ComponentSynchronizer {
 /// A synchronizer for a single resource type.
 #[derive(Clone, Copy)]
 struct ResourceSynchronizer {
-    extract_resource: fn(&World) -> Option<Box<dyn SimulationCommand>>,
+    extract_resource: fn(&World) -> Option<Box<dyn DiscreteEvent>>,
     tracking_system: Option<fn() -> ScheduleConfigs<ScheduleSystem>>,
 }
 
@@ -160,7 +161,7 @@ impl ResourceSynchronizer {
                 Some(Box::new(ResourceChanges(value)))
             },
             tracking_system: if TRACKED {
-                Some(|| SimulationCommandBuffer::buffer_resource_changes::<T>.into_configs())
+                Some(|| SimulationStepBuffer::buffer_resource_changes::<T>.into_configs())
             } else {
                 None
             },
@@ -182,17 +183,18 @@ impl StepSender {
     }
 }
 
-/// A buffer to store a series of [`SimulationCommand`]s built in the current step,
+// TODO: Can we modify [`SystemBuffer`] for this instead?
+/// A buffer to store a series of [`DiscreteEvent`]s built in the current step,
 /// sent to the main world as a single [`SimulationStep`].
 #[derive(Resource, Default)]
-pub struct SimulationCommandBuffer(Vec<Box<dyn SimulationCommand>>);
+pub struct SimulationStepBuffer(Vec<Box<dyn DiscreteEvent>>);
 
-impl SimulationCommandBuffer {
-    fn push(&mut self, command: Box<dyn SimulationCommand>) {
-        self.0.push(command);
+impl SimulationStepBuffer {
+    fn push(&mut self, event: Box<dyn DiscreteEvent>) {
+        self.0.push(event);
     }
 
-    fn take(&mut self) -> Vec<Box<dyn SimulationCommand>> {
+    fn take(&mut self) -> Vec<Box<dyn DiscreteEvent>> {
         std::mem::take(&mut self.0)
     }
 
@@ -233,14 +235,14 @@ impl SimulationCommandBuffer {
         mut buffer: ResMut<Self>,
         sender: Res<StepSender>,
     ) {
-        let commands = buffer.take();
-        if commands.is_empty() {
+        let events = buffer.take();
+        if events.is_empty() {
             return;
         }
 
         sender.send(SimulationStep {
             time: clock.now(),
-            commands,
+            events,
         });
     }
 }

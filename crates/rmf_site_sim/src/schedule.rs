@@ -14,9 +14,11 @@ pub struct SimulationStartup;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
 pub struct SimulationComputeStep;
 
+// TODO: Some systems may require seeing the world before ApplyScheduledEvents, rather than after
 /// System sets that order execution within a [`SimulationComputeStep`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SystemSet)]
 pub enum SimulationComputeSet {
+    ApplyScheduledEvents,
     ExecuteSystems,
     SendSimulationStep,
     IncrementComputeClock,

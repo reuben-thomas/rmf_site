@@ -1,3 +1,4 @@
+use crate::event::DiscreteEvents;
 use crate::schedule::{
     ScheduleBuilder, SimulationComputeSet, SimulationComputeStep, SimulationStartup,
 };
@@ -32,13 +33,15 @@ pub struct SimulationComputePlugin {
 impl Plugin for SimulationComputePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SimulationComputeClock>();
+        app.init_resource::<DiscreteEvents>();
+        app.init_resource::<DiscreteEvents>();
 
         let world = app.world_mut();
         for entity in &self.entities {
             spawn_at(world, *entity);
         }
-        for command in self.init_step.commands.clone() {
-            command.apply(world);
+        for event in self.init_step.events.clone() {
+            event.apply(world);
         }
 
         let startup_schedule = self.startup_schedule_builder.build();
@@ -46,15 +49,20 @@ impl Plugin for SimulationComputePlugin {
         // TODO: Should the following configuration logic be within the builder?
         system_schedule.configure_sets(
             (
+                SimulationComputeSet::ApplyScheduledEvents,
                 SimulationComputeSet::ExecuteSystems,
                 SimulationComputeSet::SendSimulationStep,
                 SimulationComputeSet::IncrementComputeClock,
             )
                 .chain(),
         );
-        system_schedule.add_systems(
+        system_schedule.add_systems((
+            DiscreteEvents::apply_current.in_set(SimulationComputeSet::ApplyScheduledEvents),
+            DiscreteEvents::sync_with_clock
+                .in_set(SimulationComputeSet::IncrementComputeClock)
+                .before(SimulationComputeClock::advance),
             SimulationComputeClock::advance.in_set(SimulationComputeSet::IncrementComputeClock),
-        );
+        ));
         self.synchronizer.configure_tracking(
             app.world_mut(),
             &mut system_schedule,
@@ -99,10 +107,10 @@ impl SimulationComputeClock {
         self.current
     }
 
-    /// Adds a pending time to be processed.
+    /// Insert a pending time to be processed.
     ///
     /// Returns whether a new pending time was added.
-    pub fn try_add_pending(&mut self, time: SimulationTime) -> bool {
+    pub fn insert_pending(&mut self, time: SimulationTime) -> bool {
         if time <= self.current {
             panic!(
                 "Tried to add time {time:?} that is not greater than the current time {:?}.",
@@ -123,13 +131,14 @@ impl SimulationComputeClock {
             .pending
             .pop_first()
             .expect("No pending times to increment");
+        info!("Compute clock ticked to time {:?}", time);
         self.current = time;
     }
 
     /// System to advance the compute clock to the next pending time, if one exists.
     pub fn advance(mut clock: ResMut<SimulationComputeClock>) {
         if clock.pending.is_empty() {
-            debug!("Compute clock reached end at time {:?}", clock.now());
+            info!("Compute clock reached end at time {:?}", clock.now());
             clock.is_complete = true;
             return;
         }

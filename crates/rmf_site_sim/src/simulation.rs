@@ -1,5 +1,5 @@
 use crate::compute::{SimulationComputePlugin, compute_simulation};
-use crate::event::DiscreteEventsPlugin;
+use crate::event::DiscreteEvent;
 use crate::schedule::{
     ScheduleBuilder, SimulationComputeSet, SimulationComputeStep, SimulationScheduleConfigs,
     SimulationStartup, SystemExecutionOrdering,
@@ -103,12 +103,6 @@ impl SimulationBuilder {
         self
     }
 
-    /// Registers a discrete event type that can be scheduled in the simulation, driving the
-    /// compute clock forward to each scheduled event time.
-    pub fn register_discrete_event<T: Event>(self) -> Self {
-        self.add_plugins(DiscreteEventsPlugin::<T>::default())
-    }
-
     /// Builds a new [`Simulation`].
     pub fn build(&self, world: &World) -> Simulation {
         Simulation::new(self.clone(), world)
@@ -127,9 +121,14 @@ impl Simulation {
     // TODO: Should extract be performed explicitly? e.g. Simulation::extract, Simulation::compute
     fn new(builder: SimulationBuilder, world: &World) -> Self {
         let entities = builder.synchronizer.extract_entities(world);
-        let mut commands = builder.synchronizer.extract_components(world);
-        commands.extend(builder.synchronizer.extract_resources(world));
-        let init_step = SimulationInitStep { commands };
+        let init_step = SimulationInitStep {
+            events: builder
+                .synchronizer
+                .extract_components(world)
+                .into_iter()
+                .chain(builder.synchronizer.extract_resources(world))
+                .collect(),
+        };
         let (step_sender, step_receiver) = unbounded();
         let compute_plugin = SimulationComputePlugin {
             synchronizer: builder.synchronizer,
@@ -174,42 +173,26 @@ impl Simulation {
 }
 
 // TODO:
+// - Use BTreeMap if not storing only changes
 // - Perhaps handle world mutations directly in a step
 // - Possibly better as a generic, e.g. SimulationStep<Init>, SimulationStep<Update>
 /// A single computed simulation step.
 #[derive(Clone)]
 pub struct SimulationStep {
     pub time: SimulationTime,
-    pub commands: Vec<Box<dyn SimulationCommand>>,
+    pub events: Vec<Box<dyn DiscreteEvent>>,
 }
 
 /// A simulation step that that captures the initial state of the simulation
 #[derive(Clone)]
 pub struct SimulationInitStep {
-    pub commands: Vec<Box<dyn SimulationCommand>>,
-}
-
-// TODO: This data structure is inefficient for storing changes, since unique changes are all stored in closures.
-/// A world mutation similar to [`Command`].
-/// Unlike [`Command`], this trait requires `Send` + `Sync` instead of just `Send` to allow a simulation to be computed in a separate thread.
-pub trait SimulationCommand: Send + Sync + 'static {
-    /// Applies the command to the world.
-    fn apply(self: Box<Self>, world: &mut World);
-
-    /// Clones into a boxed object.
-    fn clone_to_box(&self) -> Box<dyn SimulationCommand>;
-}
-
-impl Clone for Box<dyn SimulationCommand> {
-    fn clone(&self) -> Self {
-        self.clone_to_box()
-    }
+    pub events: Vec<Box<dyn DiscreteEvent>>,
 }
 
 /// A map of [`Entity`] to changed [`Component`] values.
 pub struct ComponentChanges<T: Component>(pub EntityHashMap<T>);
 
-impl<T: Component + Clone> SimulationCommand for ComponentChanges<T> {
+impl<T: Component + Clone> DiscreteEvent for ComponentChanges<T> {
     fn apply(self: Box<Self>, world: &mut World) {
         for (entity, value) in self.0 {
             if let Ok(mut e) = world.get_entity_mut(entity) {
@@ -218,7 +201,7 @@ impl<T: Component + Clone> SimulationCommand for ComponentChanges<T> {
         }
     }
 
-    fn clone_to_box(&self) -> Box<dyn SimulationCommand> {
+    fn clone_to_box(&self) -> Box<dyn DiscreteEvent> {
         Box::new(ComponentChanges(self.0.clone()))
     }
 }
@@ -226,12 +209,12 @@ impl<T: Component + Clone> SimulationCommand for ComponentChanges<T> {
 /// A changed [`Resource`] value.
 pub struct ResourceChanges<T: Resource>(pub T);
 
-impl<T: Resource + Clone> SimulationCommand for ResourceChanges<T> {
+impl<T: Resource + Clone> DiscreteEvent for ResourceChanges<T> {
     fn apply(self: Box<Self>, world: &mut World) {
         world.insert_resource(self.0);
     }
 
-    fn clone_to_box(&self) -> Box<dyn SimulationCommand> {
+    fn clone_to_box(&self) -> Box<dyn DiscreteEvent> {
         Box::new(ResourceChanges(self.0.clone()))
     }
 }
