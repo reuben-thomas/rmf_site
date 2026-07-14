@@ -1,15 +1,15 @@
 use crate::compute::{SimulationComputePlugin, compute_simulation};
-use crate::event::DiscreteEventsPlugin;
+use crate::event::DiscreteEvent;
 use crate::schedule::{
     ScheduleBuilder, SimulationComputeSet, SimulationComputeStep, SimulationScheduleConfigs,
     SimulationStartup, SystemExecutionOrdering,
 };
-use crate::sync::Synchronizer;
+use crate::sync::Extractor;
 use crate::time::SimulationTime;
 use bevy::app::Plugins;
-use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, unbounded};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::thread;
 
@@ -25,7 +25,7 @@ impl Plugin for SimulationPlugin {
 /// Builds a [`Simulation`].
 #[derive(Clone, Component)]
 pub struct SimulationBuilder {
-    synchronizer: Synchronizer,
+    extractor: Extractor,
     startup_schedule_builder: ScheduleBuilder,
     compute_schedule_builder: ScheduleBuilder,
     plugins: Vec<PluginFactory>,
@@ -39,12 +39,11 @@ impl Default for SimulationBuilder {
 
 /// Builder for creating a [`Simulation`].
 ///
-/// All registererd resources and components, as well as their corresponding entities are extracted into the simulation world.
-/// Only tracked components and resources are tracked for changes and sent as a [`SimulationStep`] to the main world.
+/// All registered resources and components, as well as their corresponding entities are extracted into the simulation world.
 impl SimulationBuilder {
     pub fn new() -> Self {
         Self {
-            synchronizer: Synchronizer::default(),
+            extractor: Extractor::default(),
             startup_schedule_builder: ScheduleBuilder::new(SimulationStartup),
             compute_schedule_builder: ScheduleBuilder::new(SimulationComputeStep)
                 .set_ordering(SystemExecutionOrdering::Total),
@@ -63,27 +62,15 @@ impl SimulationBuilder {
         self
     }
 
-    /// Registers a tracked component.
-    pub fn register_tracked_component<T: Component + Clone>(mut self) -> Self {
-        self.synchronizer.register_tracked::<T>();
+    /// Registers a component to extract into the simulation world.
+    pub fn register_component<T: Component + Clone>(mut self) -> Self {
+        self.extractor.register_component::<T>();
         self
     }
 
-    /// Registers an untracked component.
-    pub fn register_untracked_component<T: Component + Clone>(mut self) -> Self {
-        self.synchronizer.register_untracked::<T>();
-        self
-    }
-
-    /// Registers a tracked resource.
-    pub fn register_tracked_resource<T: Resource + Clone>(mut self) -> Self {
-        self.synchronizer.register_tracked_resource::<T>();
-        self
-    }
-
-    /// Registers an untracked resource.
-    pub fn register_untracked_resource<T: Resource + Clone>(mut self) -> Self {
-        self.synchronizer.register_untracked_resource::<T>();
+    /// Registers a resource to extract into the simulation world.
+    pub fn register_resource<T: Resource + Clone>(mut self) -> Self {
+        self.extractor.register_resource::<T>();
         self
     }
 
@@ -103,12 +90,6 @@ impl SimulationBuilder {
         self
     }
 
-    /// Registers a discrete event type that can be scheduled in the simulation, driving the
-    /// compute clock forward to each scheduled event time.
-    pub fn register_discrete_event<T: Event>(self) -> Self {
-        self.add_plugins(DiscreteEventsPlugin::<T>::default())
-    }
-
     /// Builds a new [`Simulation`].
     pub fn build(&self, world: &World) -> Simulation {
         Simulation::new(self.clone(), world)
@@ -118,21 +99,19 @@ impl SimulationBuilder {
 /// A unique discrete event simulation.
 #[derive(Component)]
 pub struct Simulation {
-    init_step: SimulationInitStep,
-    simulation_steps: Vec<SimulationStep>,
-    step_receiver: Receiver<SimulationStep>,
+    init_step: SimulationStep,
+    simulation_steps: BTreeMap<SimulationTime, SimulationStep>,
+    step_receiver: Receiver<(SimulationTime, SimulationStep)>,
 }
 
 impl Simulation {
     // TODO: Should extract be performed explicitly? e.g. Simulation::extract, Simulation::compute
     fn new(builder: SimulationBuilder, world: &World) -> Self {
-        let entities = builder.synchronizer.extract_entities(world);
-        let mut commands = builder.synchronizer.extract_components(world);
-        commands.extend(builder.synchronizer.extract_resources(world));
-        let init_step = SimulationInitStep { commands };
+        let entities = builder.extractor.extract_entities(world);
+        let events = builder.extractor.create_extract_event(world);
+        let init_step = SimulationStep { events };
         let (step_sender, step_receiver) = unbounded();
         let compute_plugin = SimulationComputePlugin {
-            synchronizer: builder.synchronizer,
             startup_schedule_builder: builder.startup_schedule_builder,
             compute_schedule_builder: builder.compute_schedule_builder,
             entities,
@@ -147,17 +126,17 @@ impl Simulation {
         Self {
             step_receiver,
             init_step,
-            simulation_steps: Vec::new(),
+            simulation_steps: BTreeMap::new(),
         }
     }
 
     /// The initial step of the simulation, which can be used to reset to the simulation's initial state.
-    pub fn init_step(&self) -> &SimulationInitStep {
+    pub fn init_step(&self) -> &SimulationStep {
         &self.init_step
     }
 
-    /// The computed simulation steps, in order of execution.
-    pub fn steps(&self) -> &[SimulationStep] {
+    /// The computed simulation steps, ordered by simulation time.
+    pub fn steps(&self) -> &BTreeMap<SimulationTime, SimulationStep> {
         &self.simulation_steps
     }
 
@@ -166,74 +145,17 @@ impl Simulation {
     fn update_steps(mut simulations: Query<&mut Simulation>) {
         for mut simulation in &mut simulations {
             let simulation = &mut *simulation;
-            for step in simulation.step_receiver.try_iter() {
-                simulation.simulation_steps.push(step);
+            for (time, step) in simulation.step_receiver.try_iter() {
+                simulation.simulation_steps.insert(time, step);
             }
         }
     }
 }
 
-// TODO:
-// - Perhaps handle world mutations directly in a step
-// - Possibly better as a generic, e.g. SimulationStep<Init>, SimulationStep<Update>
 /// A single computed simulation step.
 #[derive(Clone)]
 pub struct SimulationStep {
-    pub time: SimulationTime,
-    pub commands: Vec<Box<dyn SimulationCommand>>,
-}
-
-/// A simulation step that that captures the initial state of the simulation
-#[derive(Clone)]
-pub struct SimulationInitStep {
-    pub commands: Vec<Box<dyn SimulationCommand>>,
-}
-
-// TODO: This data structure is inefficient for storing changes, since unique changes are all stored in closures.
-/// A world mutation similar to [`Command`].
-/// Unlike [`Command`], this trait requires `Send` + `Sync` instead of just `Send` to allow a simulation to be computed in a separate thread.
-pub trait SimulationCommand: Send + Sync + 'static {
-    /// Applies the command to the world.
-    fn apply(self: Box<Self>, world: &mut World);
-
-    /// Clones into a boxed object.
-    fn clone_to_box(&self) -> Box<dyn SimulationCommand>;
-}
-
-impl Clone for Box<dyn SimulationCommand> {
-    fn clone(&self) -> Self {
-        self.clone_to_box()
-    }
-}
-
-/// A map of [`Entity`] to changed [`Component`] values.
-pub struct ComponentChanges<T: Component>(pub EntityHashMap<T>);
-
-impl<T: Component + Clone> SimulationCommand for ComponentChanges<T> {
-    fn apply(self: Box<Self>, world: &mut World) {
-        for (entity, value) in self.0 {
-            if let Ok(mut e) = world.get_entity_mut(entity) {
-                e.insert(value);
-            }
-        }
-    }
-
-    fn clone_to_box(&self) -> Box<dyn SimulationCommand> {
-        Box::new(ComponentChanges(self.0.clone()))
-    }
-}
-
-/// A changed [`Resource`] value.
-pub struct ResourceChanges<T: Resource>(pub T);
-
-impl<T: Resource + Clone> SimulationCommand for ResourceChanges<T> {
-    fn apply(self: Box<Self>, world: &mut World) {
-        world.insert_resource(self.0);
-    }
-
-    fn clone_to_box(&self) -> Box<dyn SimulationCommand> {
-        Box::new(ResourceChanges(self.0.clone()))
-    }
+    pub events: Vec<Box<dyn DiscreteEvent>>,
 }
 
 /// Adds one or more plugins to the target world's [`App`].
