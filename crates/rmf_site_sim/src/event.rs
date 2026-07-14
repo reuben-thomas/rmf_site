@@ -68,21 +68,17 @@ impl DiscreteEvents {
 
     /// The nearest scheduled event time, which is always in the future.
     fn next_time(&self) -> Option<SimulationTime> {
-        match &self.scheduled {
-            Some((nearest, _)) => Some(*nearest),
-            None => None,
-        }
+        self.scheduled.as_ref().map(|(nearest, _)| *nearest)
     }
 
     /// Removes and returns the events scheduled at the specified time.
     fn take_events_at(&mut self, time: SimulationTime) -> Vec<Box<dyn DiscreteEvent>> {
         let mut events = std::mem::take(&mut self.instant);
-        if let Some((scheduled_time, _)) = &self.scheduled {
-            if *scheduled_time == time {
+        if let Some((scheduled_time, _)) = &self.scheduled
+            && *scheduled_time == time {
                 let (_, scheduled) = self.scheduled.take().unwrap();
                 events.extend(scheduled);
             }
-        }
         events
     }
 
@@ -161,16 +157,14 @@ impl DiscreteChange<'_, '_> {
             Ordering::Less => false,
             Ordering::Equal => true,
             Ordering::Greater => {
-                if let Some((next_time, _)) = &self.buffer.scheduled {
-                    if time > *next_time {
+                if let Some((next_time, _)) = &self.buffer.scheduled
+                    && time > *next_time {
                         return false;
                     }
-                }
-                if let Some(next_time) = self.events.next_time() {
-                    if time > next_time {
+                if let Some(next_time) = self.events.next_time()
+                    && time > next_time {
                         return false;
                     }
-                }
                 true
             }
         }
