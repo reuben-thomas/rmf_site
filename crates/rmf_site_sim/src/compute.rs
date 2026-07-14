@@ -1,8 +1,9 @@
+use crate::event::{DiscreteEvents, execute_events};
 use crate::schedule::{
     ScheduleBuilder, SimulationComputeSet, SimulationComputeStep, SimulationStartup,
 };
-use crate::simulation::{PluginFactory, SimulationInitStep, SimulationStep};
-use crate::sync::Synchronizer;
+use crate::simulation::{PluginFactory, SimulationStep};
+use crate::sync::{SimulationEventBuffer, StepSender};
 use crate::time::SimulationTime;
 use bevy::prelude::*;
 use crossbeam_channel::Sender;
@@ -21,24 +22,26 @@ pub fn compute_simulation(compute_plugin: SimulationComputePlugin, plugins: Vec<
 
 /// Plugin that computes [`SimulationStep`]s for a simulation.
 pub struct SimulationComputePlugin {
-    pub synchronizer: Synchronizer,
     pub startup_schedule_builder: ScheduleBuilder,
     pub compute_schedule_builder: ScheduleBuilder,
     pub entities: Vec<Entity>,
-    pub init_step: SimulationInitStep,
-    pub step_sender: Sender<SimulationStep>,
+    pub init_step: SimulationStep,
+    pub step_sender: Sender<(SimulationTime, SimulationStep)>,
 }
 
 impl Plugin for SimulationComputePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SimulationComputeClock>();
+        app.init_resource::<SimulationComputeClock>()
+            .init_resource::<DiscreteEvents>()
+            .init_resource::<SimulationEventBuffer>()
+            .insert_resource(StepSender::new(self.step_sender.clone()));
 
         let world = app.world_mut();
         for entity in &self.entities {
             spawn_at(world, *entity);
         }
-        for command in self.init_step.commands.clone() {
-            command.apply(world);
+        for event in self.init_step.events.clone() {
+            event.apply(world);
         }
 
         let startup_schedule = self.startup_schedule_builder.build();
@@ -46,20 +49,25 @@ impl Plugin for SimulationComputePlugin {
         // TODO: Should the following configuration logic be within the builder?
         system_schedule.configure_sets(
             (
+                SimulationComputeSet::ExecuteEvents,
                 SimulationComputeSet::ExecuteSystems,
+                SimulationComputeSet::ExecuteInstantEvents,
                 SimulationComputeSet::SendSimulationStep,
                 SimulationComputeSet::IncrementComputeClock,
             )
                 .chain(),
         );
-        system_schedule.add_systems(
-            SimulationComputeClock::advance.in_set(SimulationComputeSet::IncrementComputeClock),
-        );
-        self.synchronizer.configure_tracking(
-            app.world_mut(),
-            &mut system_schedule,
-            self.step_sender.clone(),
-        );
+        system_schedule.add_systems((
+            execute_events.in_set(SimulationComputeSet::ExecuteEvents),
+            execute_events.in_set(SimulationComputeSet::ExecuteInstantEvents),
+            SimulationEventBuffer::send_step.in_set(SimulationComputeSet::SendSimulationStep),
+            (
+                DiscreteEvents::sync_with_clock,
+                SimulationComputeClock::advance,
+            )
+                .chain()
+                .in_set(SimulationComputeSet::IncrementComputeClock),
+        ));
 
         app.add_schedule(startup_schedule);
         app.add_schedule(system_schedule);

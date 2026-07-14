@@ -1,246 +1,181 @@
 use crate::compute::SimulationComputeClock;
-use crate::schedule::SimulationComputeSet;
-use crate::simulation::{ComponentChanges, ResourceChanges, SimulationCommand, SimulationStep};
+use crate::event::DiscreteEvent;
+use crate::simulation::SimulationStep;
+use crate::time::SimulationTime;
 use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
-use bevy::ecs::schedule::ScheduleConfigs;
-use bevy::ecs::system::ScheduleSystem;
 use bevy::prelude::*;
 use crossbeam_channel::Sender;
 
-/// Synchronizes entities, components, and resources between the main and simulation world.
-///
-/// All registererd resources and components, as well as their corresponding entities are extracted into the simulation world.
-/// Only tracked components and resources are tracked for changes and sent as a [`SimulationStep`] to the main world.
+/// Extracts entities, components, and resources from the main world into the simulation world.
 #[derive(Default, Clone)]
-pub struct Synchronizer {
-    component_synchronizers: Vec<ComponentSynchronizer>,
-    resource_synchronizers: Vec<ResourceSynchronizer>,
+pub struct Extractor {
+    component_extractors: Vec<ComponentExtractor>,
+    resource_extractors: Vec<ResourceExtractor>,
 }
 
-impl Synchronizer {
-    /// Registers a component to extract without tracking changes.
-    pub fn register_untracked<T: Component + Clone>(&mut self) {
-        self.register_component::<T, false>();
-    }
-    /// Registers a component to extract and track changes.
-    pub fn register_tracked<T: Component + Clone>(&mut self) {
-        self.register_component::<T, true>();
-    }
-
+impl Extractor {
     // TODO: What if register_component is called twice for the same type?
-    fn register_component<T: Component + Clone, const TRACKED: bool>(&mut self) {
-        self.component_synchronizers
-            .push(ComponentSynchronizer::new::<T, TRACKED>());
+    /// Registers a component to extract.
+    pub fn register_component<T: Component + Clone>(&mut self) {
+        self.component_extractors
+            .push(ComponentExtractor::new::<T>());
     }
 
-    /// Registers a resource to extract without tracking changes.
-    pub fn register_untracked_resource<T: Resource + Clone>(&mut self) {
-        self.register_resource::<T, false>();
+    /// Registers a resource to extract.
+    pub fn register_resource<T: Resource + Clone>(&mut self) {
+        self.resource_extractors.push(ResourceExtractor::new::<T>());
     }
 
-    /// Registers a resource to extract and track changes.
-    pub fn register_tracked_resource<T: Resource + Clone>(&mut self) {
-        self.register_resource::<T, true>();
-    }
-
-    fn register_resource<T: Resource + Clone, const TRACKED: bool>(&mut self) {
-        self.resource_synchronizers
-            .push(ResourceSynchronizer::new::<T, TRACKED>());
-    }
-
-    /// Extracts all entities that should be synchronized.
+    /// Extracts all entities that with at least one registered component.
     pub fn extract_entities(&self, world: &World) -> Vec<Entity> {
         let mut entities = EntityHashSet::default();
-        for synchronizer in &self.component_synchronizers {
-            (synchronizer.extract_entities)(world, &mut entities);
+        for extractor in &self.component_extractors {
+            (extractor.extract_entities)(world, &mut entities);
         }
         entities.into_iter().collect()
     }
 
+    // TODO: This is now also used for the init / reset step.
+    /// Creates the events that capture the extracted component and resource states.
+    pub fn create_extract_event(&self, world: &World) -> Vec<Box<dyn DiscreteEvent>> {
+        let mut events = self.extract_components(world);
+        events.extend(self.extract_resources(world));
+        events
+    }
+
     /// Extracts all components that should be synchronized.
-    pub fn extract_components(&self, world: &World) -> Vec<Box<dyn SimulationCommand>> {
-        self.component_synchronizers
+    fn extract_components(&self, world: &World) -> Vec<Box<dyn DiscreteEvent>> {
+        self.component_extractors
             .iter()
-            .map(|synchronizer| (synchronizer.extract_components)(world))
+            .map(|extractor| (extractor.extract_components)(world))
             .collect()
     }
 
     /// Extracts all resources that should be synchronized.
-    pub fn extract_resources(&self, world: &World) -> Vec<Box<dyn SimulationCommand>> {
-        self.resource_synchronizers
+    fn extract_resources(&self, world: &World) -> Vec<Box<dyn DiscreteEvent>> {
+        self.resource_extractors
             .iter()
-            .filter_map(|synchronizer| (synchronizer.extract_resource)(world))
+            .filter_map(|extractor| (extractor.extract_resource)(world))
             .collect()
     }
-
-    /// Inserts the resources required for tracking changes to components.
-    pub fn configure_tracking(
-        &self,
-        world: &mut World,
-        schedule: &mut Schedule,
-        step_sender: Sender<SimulationStep>,
-    ) {
-        world.init_resource::<SimulationCommandBuffer>();
-        world.insert_resource(StepSender::new(step_sender));
-
-        for synchronizer in &self.component_synchronizers {
-            if let Some(tracking_system) = synchronizer.tracking_system {
-                schedule.add_systems(
-                    tracking_system()
-                        .before(SimulationCommandBuffer::send_step)
-                        .in_set(SimulationComputeSet::SendSimulationStep),
-                );
-            }
-        }
-        for synchronizer in &self.resource_synchronizers {
-            if let Some(tracking_system) = synchronizer.tracking_system {
-                schedule.add_systems(
-                    tracking_system()
-                        .before(SimulationCommandBuffer::send_step)
-                        .in_set(SimulationComputeSet::SendSimulationStep),
-                );
-            }
-        }
-        schedule.add_systems(
-            SimulationCommandBuffer::send_step
-                .before(SimulationComputeClock::advance)
-                .in_set(SimulationComputeSet::SendSimulationStep),
-        );
-    }
 }
 
-/// A synchronizer for a single component type.
+/// An extractor for a single component type.
 #[derive(Clone, Copy)]
-struct ComponentSynchronizer {
+struct ComponentExtractor {
     extract_entities: fn(&World, &mut EntityHashSet),
-    extract_components: fn(&World) -> Box<dyn SimulationCommand>,
-    tracking_system: Option<fn() -> ScheduleConfigs<ScheduleSystem>>,
+    extract_components: fn(&World) -> Box<dyn DiscreteEvent>,
 }
 
-impl ComponentSynchronizer {
-    fn new<T: Component + Clone, const TRACKED: bool>() -> Self {
+impl ComponentExtractor {
+    fn new<T: Component + Clone>() -> Self {
         Self {
-            extract_entities: |world, entities| {
-                entities.extend(
-                    world
-                        .iter_entities()
-                        .filter(|entity| entity.contains::<T>())
-                        .map(|entity| entity.id()),
-                );
-            },
-            extract_components: |world| {
-                let changes = world
-                    .iter_entities()
-                    .filter_map(|entity| Some((entity.id(), entity.get::<T>().cloned()?)))
-                    .collect();
-                Box::new(ComponentChanges::<T>(changes))
-            },
-            // TODO: More idiomatic way to do constexpr?
-            tracking_system: if TRACKED {
-                Some(|| SimulationCommandBuffer::buffer_component_changes::<T>.into_configs())
-            } else {
-                None
-            },
+            extract_entities: Self::extract_entities::<T>,
+            extract_components: Self::extract_components::<T>,
         }
+    }
+
+    fn extract_entities<T: Component>(world: &World, entities: &mut EntityHashSet) {
+        let Some(mut query) = world.try_query_filtered::<Entity, With<T>>() else {
+            return;
+        };
+        entities.extend(query.iter(world));
+    }
+
+    fn extract_components<T: Component + Clone>(world: &World) -> Box<dyn DiscreteEvent> {
+        let components = world
+            .iter_entities()
+            .filter_map(|entity| Some((entity.id(), entity.get::<T>().cloned()?)))
+            .collect();
+        Box::new(ExtractComponents::<T>(components))
     }
 }
 
-/// A synchronizer for a single resource type.
+/// An extractor for a single resource type.
 #[derive(Clone, Copy)]
-struct ResourceSynchronizer {
-    extract_resource: fn(&World) -> Option<Box<dyn SimulationCommand>>,
-    tracking_system: Option<fn() -> ScheduleConfigs<ScheduleSystem>>,
+struct ResourceExtractor {
+    extract_resource: fn(&World) -> Option<Box<dyn DiscreteEvent>>,
 }
 
-impl ResourceSynchronizer {
-    fn new<T: Resource + Clone, const TRACKED: bool>() -> Self {
+impl ResourceExtractor {
+    fn new<T: Resource + Clone>() -> Self {
         Self {
-            extract_resource: |world| {
-                let value = world.get_resource::<T>()?.clone();
-                Some(Box::new(ResourceChanges(value)))
-            },
-            tracking_system: if TRACKED {
-                Some(|| SimulationCommandBuffer::buffer_resource_changes::<T>.into_configs())
-            } else {
-                None
-            },
+            extract_resource: Self::extract_resource::<T>,
         }
+    }
+
+    fn extract_resource<T: Resource + Clone>(world: &World) -> Option<Box<dyn DiscreteEvent>> {
+        let value = world.get_resource::<T>()?.clone();
+        Some(Box::new(ExtractResource(value)))
+    }
+}
+
+pub struct ExtractComponents<T: Component>(pub EntityHashMap<T>);
+
+impl<T: Component + Clone> DiscreteEvent for ExtractComponents<T> {
+    fn apply(self: Box<Self>, world: &mut World) {
+        for (entity, value) in self.0 {
+            if let Ok(mut e) = world.get_entity_mut(entity) {
+                e.insert(value);
+            }
+        }
+    }
+
+    fn clone_to_box(&self) -> Box<dyn DiscreteEvent> {
+        Box::new(ExtractComponents(self.0.clone()))
+    }
+}
+
+pub struct ExtractResource<T: Resource>(pub T);
+
+impl<T: Resource + Clone> DiscreteEvent for ExtractResource<T> {
+    fn apply(self: Box<Self>, world: &mut World) {
+        world.insert_resource(self.0);
+    }
+
+    fn clone_to_box(&self) -> Box<dyn DiscreteEvent> {
+        Box::new(ExtractResource(self.0.clone()))
     }
 }
 
 #[derive(Resource)]
-pub struct StepSender(Sender<SimulationStep>);
+pub struct StepSender(Sender<(SimulationTime, SimulationStep)>);
 
 impl StepSender {
-    pub fn new(sender: Sender<SimulationStep>) -> Self {
+    pub fn new(sender: Sender<(SimulationTime, SimulationStep)>) -> Self {
         Self(sender)
     }
 
-    fn send(&self, step: SimulationStep) {
+    fn send(&self, time: SimulationTime, step: SimulationStep) {
         // TODO: Error handling
-        let _ = self.0.send(step);
+        let _ = self.0.send((time, step));
     }
 }
 
-/// A buffer to store a series of [`SimulationCommand`]s built in the current step,
+/// A buffer to store the [`DiscreteEvent`]s executed in the current step,
 /// sent to the main world as a single [`SimulationStep`].
 #[derive(Resource, Default)]
-pub struct SimulationCommandBuffer(Vec<Box<dyn SimulationCommand>>);
+pub struct SimulationEventBuffer(Vec<Box<dyn DiscreteEvent>>);
 
-impl SimulationCommandBuffer {
-    fn push(&mut self, command: Box<dyn SimulationCommand>) {
-        self.0.push(command);
+impl SimulationEventBuffer {
+    pub(crate) fn extend(&mut self, events: impl IntoIterator<Item = Box<dyn DiscreteEvent>>) {
+        self.0.extend(events);
     }
 
-    fn take(&mut self) -> Vec<Box<dyn SimulationCommand>> {
+    fn take(&mut self) -> Vec<Box<dyn DiscreteEvent>> {
         std::mem::take(&mut self.0)
     }
 
-    // TODO:
-    // - verify change with partialeq to avoid mistaken triggers from `Query.mut()`
-    // - store a full snapshot every x steps
-    fn buffer_component_changes<T: Component + Clone>(
-        changed: Query<(Entity, &T), Changed<T>>,
-        mut buffer: ResMut<Self>,
-    ) {
-        let mut changes = EntityHashMap::default();
-        for (entity, component) in changed.iter() {
-            changes.insert(entity, component.clone());
-        }
-        if changes.is_empty() {
-            return;
-        }
-
-        buffer.push(Box::new(ComponentChanges(changes)));
-    }
-
-    fn buffer_resource_changes<T: Resource + Clone>(
-        resource: Option<Res<T>>,
-        mut buffer: ResMut<Self>,
-    ) {
-        let Some(resource) = resource else {
-            return;
-        };
-        if !resource.is_changed() {
-            return;
-        }
-
-        buffer.push(Box::new(ResourceChanges(resource.clone())));
-    }
-
-    fn send_step(
+    pub(crate) fn send_step(
         clock: Res<SimulationComputeClock>,
         mut buffer: ResMut<Self>,
         sender: Res<StepSender>,
     ) {
-        let commands = buffer.take();
-        if commands.is_empty() {
+        let events = buffer.take();
+        if events.is_empty() {
             return;
         }
 
-        sender.send(SimulationStep {
-            time: clock.now(),
-            commands,
-        });
+        sender.send(clock.now(), SimulationStep { events });
     }
 }

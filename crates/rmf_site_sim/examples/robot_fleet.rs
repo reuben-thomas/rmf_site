@@ -1,26 +1,71 @@
-//! In this example, we set up, compute, and animate a simple discrete event simulation for a robot fleet.
-//! A planner receives requests, generates and sends trajectories for robots to reach a goal waypoint.
-//! A robot controller schedules transform updates along the trajectory, which a robot tracker applies at their scheduled times.
-//! Upon reaching a goal waypoint, the waypoint is marked as visited.
+//! In this example, we configure, compute, and animate a simple discrete event simulation for a
+//! fleet of robots navigating to randomly assigned goals. Each model type within the simulation is
+//! represented as a Bevy system.
 //!
+//! A request generator creates requests assigning robots to goal waypoints at random. A planner system
+//! generates trajectories from these requests. From the generated trajectories, a robot system then updates
+//! robot transforms and waypoint states.
 //!
 //! ```
-//! --[RequestEvent..]--> Planner --[RobotTrajectoryEvent..]--> RobotController --[RobotStateUpdate..]--> RobotTracker
-//!                                                                            \--[GoalReachedEvent]--> Waypoint
+//! RequestGeneratorSystem --[RequestEvent..]--> PlannerSystem --[TrajectoryEvent..]--> RobotSystem --[TransformEvent..]
 //! ```
 
 use bevy::color::palettes::basic;
+use bevy::ecs::entity::EntityHashSet;
 use bevy::prelude::*;
 use rand::Rng;
 use rmf_site_sim::compute::SimulationComputeClock;
-use rmf_site_sim::event::{DiscreteEventReader, DiscreteEventWriter};
+use rmf_site_sim::event::DiscreteChange;
+use rmf_site_sim::playback::SimulationPlaybackPlugin;
 use rmf_site_sim::time::SimulationTime;
-use rmf_site_sim::{Simulation, SimulationBuilder, SimulationPlugin};
+use rmf_site_sim::{SimulationBuilder, SimulationPlugin};
 use std::time::Duration;
+
+/// Number of robots and goal waypoints to generate.
+const NUM_ROBOTS_WAYPOINTS: usize = 10;
+/// The duration to stagger the arrival of consecutive requests in seconds.
+const REQUEST_ARRIVAL_STAGGER_SECONDS: u64 = 2;
+/// The half size of the square simulation area in meters.
+const SIMULATION_AREA_HALF_SIZE: f32 = 500.0;
+/// Number of steps to interpolate within a trajectory.
+const TRAJECTORY_INTERPOLATION_STEPS: usize = 10;
+
+/// A pending request for a robot.
+#[derive(Component, Clone)]
+struct Request {
+    goal: Entity,
+}
+
+/// Robots and waypoitns for which requests have already been submitted.
+#[derive(Resource, Clone, Default)]
+struct ActiveRequestEntities {
+    robots: EntityHashSet,
+    waypoints: EntityHashSet,
+}
 
 /// A marker component for a robot.
 #[derive(Component, Clone, Debug)]
 struct Robot;
+
+/// A pose with translation and rotation.
+#[derive(Component, Clone, Copy, Debug)]
+struct Pose {
+    translation: Vec3,
+    rotation: Quat,
+}
+
+/// A point on a trajectory.
+#[derive(Clone)]
+struct TrajectoryPoint {
+    time: SimulationTime,
+    pose: Pose,
+}
+
+/// A trajectory for a robot to follow.
+#[derive(Component, Clone)]
+struct Trajectory {
+    points: Vec<TrajectoryPoint>,
+}
 
 /// A waypoint, which can be visited or unvisited.
 #[derive(Component, Clone, Debug, Eq, PartialEq)]
@@ -29,83 +74,45 @@ enum Waypoint {
     Unvisited,
 }
 
-/// A request sent to a planner that requests a robot to reach a goal waypoint.
-#[derive(Event, Clone)]
-struct RequestEvent {
-    robot: Entity,
-    goal: Entity,
-}
-
-/// A trajectory sent from the planner to a robot from its current position to the destination.
-#[derive(Event, Clone)]
-struct RobotTrajectoryEvent {
-    robot: Entity,
-    trajectory: Trajectory,
-}
-
-#[derive(Clone)]
-struct Trajectory {
-    points: Vec<TrajectoryPoint>,
-}
-
-#[derive(Clone)]
-struct TrajectoryPoint {
-    time: SimulationTime,
-    transform: Transform,
-}
-
-/// An update sent to the robot position tracker to update the robot's transform.
-#[derive(Event, Clone)]
-struct RobotStateUpdate {
-    robot: Entity,
-    transform: Transform,
-}
-
-/// An event sent to a robot's goal waypoint upon reaching it.
-#[derive(Event, Clone)]
-struct GoalReachedEvent {
-    robot: Entity,
-    waypoint: Entity,
-}
-
 fn main() {
     App::new()
-        .add_plugins((DefaultPlugins, SimulationPlugin))
+        .add_plugins((DefaultPlugins, SimulationPlugin, SimulationPlaybackPlugin))
         .add_systems(Startup, setup)
-        .add_systems(Update, (simple_playback, draw_robots, draw_waypoints))
+        // Visualization systems to show states during playback.
+        .add_systems(Update, (draw_robots, draw_waypoints, draw_trajectory))
         .run();
 }
 
+/// Setup the world, builds and spawns a simulation.
 fn setup(world: &mut World) {
-    let position_bounds = Rect::from_center_half_size(Vec2::ZERO, Vec2::new(250.0, 250.0));
+    let position_bounds = Rect::from_center_half_size(
+        Vec2::ZERO,
+        Vec2::new(SIMULATION_AREA_HALF_SIZE, SIMULATION_AREA_HALF_SIZE),
+    );
 
     world.spawn((
         Camera2d,
         Transform::from_translation(position_bounds.center().extend(0.0)),
     ));
 
-    spawn_robots_waypoints(world, 5, position_bounds);
+    spawn_robots_waypoints(world, NUM_ROBOTS_WAYPOINTS, position_bounds);
+    world.insert_resource(ActiveRequestEntities::default());
 
     let simulation = SimulationBuilder::new()
-        // Untracked components may not change, or may not be useful for visualization.
-        .register_untracked_component::<Robot>()
-        .register_untracked_component::<Name>()
-        // Changes to positions and waypoint states are relevant to the simulation and should be tracked.
-        .register_tracked_component::<Transform>()
-        .register_tracked_component::<Waypoint>()
-        // Events used within this simulation, required for 'DiscreteEventReader<T>', and 'DiscreteEventWriter<T>' in systems to work.
-        .register_discrete_event::<RequestEvent>()
-        .register_discrete_event::<RobotTrajectoryEvent>()
-        .register_discrete_event::<RobotStateUpdate>()
-        .register_discrete_event::<GoalReachedEvent>()
+        // Components and resources extracted into the simulation world.
+        .register_component::<Robot>()
+        .register_component::<Name>()
+        .register_component::<Pose>()
+        .register_component::<Waypoint>()
+        .register_resource::<ActiveRequestEntities>()
         // Systems representing models used to compute the simulation.
-        .add_startup_systems(schedule_initial_requests)
-        .add_compute_systems((planner, robot_controller, robot_tracker, waypoint))
+        .add_compute_systems((request_generator, planner, robot))
         .build(world);
 
     world.spawn(simulation);
 }
 
+/// Spawns a specified number of robots and waypoints of random pose within bounds.
 fn spawn_robots_waypoints(world: &mut World, n: usize, position_bounds: Rect) {
     let mut rng = rand::thread_rng();
 
@@ -113,250 +120,202 @@ fn spawn_robots_waypoints(world: &mut World, n: usize, position_bounds: Rect) {
         world.spawn((
             Robot,
             Name::new(format!("Robot{i}")),
-            random_transform(&mut rng, position_bounds),
+            random_axis_aligned_pose(&mut rng, position_bounds),
         ));
         world.spawn((
             Waypoint::Unvisited,
             Name::new(format!("Waypoint{i}")),
-            random_transform(&mut rng, position_bounds),
+            random_axis_aligned_pose(&mut rng, position_bounds),
         ));
     }
 }
 
-/// Schedules initial requests, assigning robots to unvisited waypoints arbitrarily.
-fn schedule_initial_requests(
-    mut writer: DiscreteEventWriter<RequestEvent>,
+/// Generates requests assigning robots to waypoints arbitrarily, exactly once per robot and waypoint.
+fn request_generator(
     robots: Query<(Entity, &Name), With<Robot>>,
-    waypoints: Query<(Entity, &Name, &Waypoint)>,
+    waypoints: Query<(Entity, &Name), With<Waypoint>>,
+    active_request_entities: Res<ActiveRequestEntities>,
+    mut discrete_change: DiscreteChange,
 ) {
-    let mut schedule_time_secs = 1;
-    let mut unvisited = waypoints
+    let mut idle_waypoints = waypoints
         .iter()
-        .filter(|(_, _, waypoint)| **waypoint == Waypoint::Unvisited);
+        .filter(|(waypoint, _)| !active_request_entities.waypoints.contains(waypoint));
+    let idle_robots = robots
+        .iter()
+        .filter(|(robot, _)| !active_request_entities.robots.contains(robot));
 
-    for (robot_entity, robot_name) in robots.iter() {
-        let Some((waypoint_entity, waypoint_name, _)) = unvisited.next() else {
+    for (i, (robot, robot_name)) in idle_robots.enumerate() {
+        let Some((goal, waypoint_name)) = idle_waypoints.next() else {
             break;
         };
 
-        writer.schedule(
-            SimulationTime::new(Duration::from_secs(schedule_time_secs)),
-            RequestEvent {
-                robot: robot_entity,
-                goal: waypoint_entity,
-            },
-        );
-        info!("Scheduled request for {} to {}", robot_name, waypoint_name);
-        schedule_time_secs += 1;
-    }
-}
-
-/// A planner that plans robot trajectories using linear interpolation.
-fn planner(
-    reader: DiscreteEventReader<RequestEvent>,
-    robots: Query<(&Transform, &Name), With<Robot>>,
-    goals: Query<&Transform, With<Waypoint>>,
-    mut writer: DiscreteEventWriter<RobotTrajectoryEvent>,
-    clock: Res<SimulationComputeClock>,
-) {
-    let mut planned_time = clock.now();
-
-    for event in reader.read() {
-        // Simulate that each request was processed in sequence with 2 seconds of latency for processing
-        planned_time = SimulationTime::new(planned_time.elapsed() + Duration::from_secs(2));
-        let (current_transform, robot_name) = robots.get(event.robot).unwrap();
-        let target_transform = goals.get(event.goal).unwrap();
-
-        // Linearly interpolate between the current and target transforms
-        let travel_duration = Duration::from_secs(10);
-        let interpolation_steps = 10;
-        let points = (0..=interpolation_steps)
-            .map(|current_step| {
-                let progress = current_step as f32 / interpolation_steps as f32;
-                TrajectoryPoint {
-                    time: SimulationTime::new(
-                        planned_time.elapsed() + travel_duration.mul_f32(progress),
-                    ),
-                    transform: Transform {
-                        translation: current_transform
-                            .translation
-                            .lerp(target_transform.translation, progress),
-                        rotation: current_transform
-                            .rotation
-                            .slerp(target_transform.rotation, progress),
-                        scale: current_transform.scale,
-                    },
-                }
-            })
-            .collect();
-
-        writer.schedule(
-            planned_time,
-            RobotTrajectoryEvent {
-                robot: event.robot,
-                trajectory: Trajectory { points },
-            },
-        );
-        info!(
-            "Planned trajectory for {} at {:?}",
-            robot_name, planned_time
-        );
-    }
-}
-
-// TODO: Expose a systemparam for users to write changes in the future?
-// e.g. robots_future: FutureQuery<&mut Transform, With<Robot>>,
-/// A robot controller that publishes state updates for the robot tracker,
-/// and notifies when goal waypoints are reached.
-fn robot_controller(
-    reader: DiscreteEventReader<RobotTrajectoryEvent>,
-    waypoints: Query<(Entity, &Transform), (With<Waypoint>, Without<Robot>)>,
-    mut state_writer: DiscreteEventWriter<RobotStateUpdate>,
-    mut goal_writer: DiscreteEventWriter<GoalReachedEvent>,
-) {
-    for event in reader.read() {
-        for point in event.trajectory.points.iter().skip(1) {
-            state_writer.schedule(
-                point.time,
-                RobotStateUpdate {
-                    robot: event.robot,
-                    transform: point.transform,
-                },
-            );
-        }
-
-        let trajectory_end = event.trajectory.points.last().unwrap();
-        let reached = waypoints.iter().find(|(_, waypoint_transform)| {
-            waypoint_transform
-                .translation
-                .distance(trajectory_end.transform.translation)
-                == 0.0
+        let schedule_number = (active_request_entities.robots.len() + i) as u64;
+        let time = SimulationTime::new(Duration::from_secs(
+            REQUEST_ARRIVAL_STAGGER_SECONDS * schedule_number,
+        ));
+        discrete_change.schedule(time, move |world: &mut World| {
+            world.entity_mut(robot).insert(Request { goal });
+            let mut active_requests = world.resource_mut::<ActiveRequestEntities>();
+            active_requests.robots.insert(robot);
+            active_requests.waypoints.insert(goal);
         });
-        if let Some((waypoint, _)) = reached {
-            goal_writer.schedule(
-                trajectory_end.time,
-                GoalReachedEvent {
-                    robot: event.robot,
-                    waypoint,
-                },
-            );
-        }
-    }
-}
-
-/// A robot tracker that updates the robot's position based on state updates,
-fn robot_tracker(
-    reader: DiscreteEventReader<RobotStateUpdate>,
-    mut robots: Query<(&mut Transform, &Name), With<Robot>>,
-    clock: Res<SimulationComputeClock>,
-) {
-    for event in reader.read() {
-        let (mut robot_transform, robot_name) = robots.get_mut(event.robot).unwrap();
-        *robot_transform = event.transform;
-        info!("Updated state for {} at {:?}", robot_name, clock.now());
-    }
-}
-
-/// A waypoint that is marked as visited when a robot reaches it.
-fn waypoint(
-    reader: DiscreteEventReader<GoalReachedEvent>,
-    robots: Query<&Name, With<Robot>>,
-    mut waypoints: Query<(&Name, &mut Waypoint), Without<Robot>>,
-    clock: Res<SimulationComputeClock>,
-) {
-    for event in reader.read() {
-        let robot_name = robots.get(event.robot).unwrap();
-        let (waypoint_name, mut waypoint) = waypoints.get_mut(event.waypoint).unwrap();
-        *waypoint = Waypoint::Visited;
         info!(
-            "{} reached {} at {:?}",
-            robot_name,
-            waypoint_name,
-            clock.now()
+            "[request_generator] Scheduled request for {} to {} at {:?}",
+            robot_name, waypoint_name, time
         );
+    }
+}
+
+/// Plans trajectories for robots using cubic interpolation.
+fn planner(
+    robots: Query<(Entity, &Pose, &Name, &Request), (With<Robot>, Without<Trajectory>)>,
+    goals: Query<&Pose, With<Waypoint>>,
+    clock: Res<SimulationComputeClock>,
+    mut change: DiscreteChange,
+) {
+    let time_now = clock.now();
+    for (robot, start_pose, robot_name, request) in robots.iter() {
+        let target_pose = goals.get(request.goal).unwrap();
+        let trajectory = plan_trajectory(start_pose, target_pose, time_now);
+        change.schedule_now(move |world: &mut World| {
+            world.entity_mut(robot).insert(trajectory);
+        });
+        info!(
+            "[planner] Planned trajectory for {} at {:?}",
+            robot_name, time_now
+        );
+    }
+}
+
+fn plan_trajectory(
+    start_pose: &Pose,
+    target_pose: &Pose,
+    start_time: SimulationTime,
+) -> Trajectory {
+    let tangent_scale = start_pose.translation.distance(target_pose.translation);
+    let curve = CubicHermite::new(
+        [start_pose.translation, target_pose.translation],
+        [
+            start_pose.rotation * Vec3::X * tangent_scale,
+            target_pose.rotation * Vec3::X * tangent_scale,
+        ],
+    )
+    .to_curve()
+    .unwrap();
+
+    let travel_duration = Duration::from_secs(10);
+    let points = (0..=TRAJECTORY_INTERPOLATION_STEPS)
+        .map(|current_step| {
+            let progress = current_step as f32 / TRAJECTORY_INTERPOLATION_STEPS as f32;
+            let velocity = curve.velocity(progress);
+            TrajectoryPoint {
+                time: SimulationTime::new(start_time.elapsed() + travel_duration.mul_f32(progress)),
+                pose: Pose {
+                    translation: curve.position(progress),
+                    rotation: Quat::from_rotation_z(velocity.y.atan2(velocity.x)),
+                },
+            }
+        })
+        .collect();
+
+    Trajectory { points }
+}
+
+/// A robot controller that schedules transform updates along a robot's trajectory,
+/// and marks the goal waypoint as visited when the trajectory ends.
+fn robot(
+    robots: Query<(Entity, &Request, &Trajectory, &Name), With<Robot>>,
+    mut change: DiscreteChange,
+    clock: Res<SimulationComputeClock>,
+) {
+    let now = clock.now();
+
+    for (robot, request, trajectory, robot_name) in robots.iter() {
+        let end = trajectory.points.last().unwrap();
+        if end.time < now {
+            continue;
+        }
+
+        for point in trajectory.points.iter().filter(|point| point.time > now) {
+            let pose = point.pose;
+            change.schedule(point.time, move |world: &mut World| {
+                world.entity_mut(robot).insert(pose);
+            });
+            info!(
+                "[robot] Scheduled pose update for {} at {:?}",
+                robot_name, point.time
+            );
+
+            if point.time == end.time {
+                let goal = request.goal;
+                change.schedule(end.time, move |world: &mut World| {
+                    *world.get_mut::<Waypoint>(goal).unwrap() = Waypoint::Visited;
+                });
+                info!(
+                    "[robot] Scheduled waypoint visit for {} at {:?}",
+                    robot_name, point.time
+                );
+            }
+        }
     }
 }
 
 /// Draws robots using a circle and arrow with gizmos.
-fn draw_robots(robots: Query<&Transform, With<Robot>>, mut gizmos: Gizmos) {
+fn draw_robots(robots: Query<&Pose, With<Robot>>, mut gizmos: Gizmos) {
     let robot_radius = 40.0;
 
-    for transform in &robots {
-        let position = transform.translation.truncate();
+    for pose in &robots {
+        let position = pose.translation.truncate();
         gizmos.circle_2d(position, robot_radius / 2.0, Color::default());
-        draw_direction_arrow(&mut gizmos, transform, robot_radius, Color::default());
+        draw_direction_arrow(&mut gizmos, pose, robot_radius, Color::default());
     }
 }
 
 /// Draws waypoints using a circle and arrow with gizmos.
-fn draw_waypoints(waypoints: Query<(&Transform, &Waypoint)>, mut gizmos: Gizmos) {
+fn draw_waypoints(waypoints: Query<(&Pose, &Waypoint)>, mut gizmos: Gizmos) {
     let waypoint_size = 50.0;
 
-    for (transform, waypoint) in &waypoints {
+    for (pose, waypoint) in &waypoints {
         let color = match waypoint {
             Waypoint::Visited => Color::from(basic::GREEN),
             Waypoint::Unvisited => Color::from(basic::GRAY),
         };
-        gizmos.circle_2d(transform.translation.truncate(), waypoint_size / 2.0, color);
-        draw_direction_arrow(&mut gizmos, transform, waypoint_size, color);
+        gizmos.circle_2d(pose.translation.truncate(), waypoint_size / 2.0, color);
+        draw_direction_arrow(&mut gizmos, pose, waypoint_size, color);
+    }
+}
+
+/// Draws the trajectories of robots with gizmos.
+fn draw_trajectory(trajectories: Query<&Trajectory, With<Robot>>, mut gizmos: Gizmos) {
+    for trajectory in &trajectories {
+        gizmos.linestrip_2d(
+            trajectory
+                .points
+                .iter()
+                .map(|point| point.pose.translation.truncate()),
+            Color::from(basic::BLUE).with_alpha(0.2),
+        );
+        for point in &trajectory.points {
+            draw_direction_arrow(&mut gizmos, &point.pose, 10.0, Color::from(basic::BLUE));
+        }
     }
 }
 
 /// Draws a direction arrow with gizmos.
-fn draw_direction_arrow(gizmos: &mut Gizmos, transform: &Transform, length: f32, color: Color) {
-    let position = transform.translation.truncate();
-    let direction = (transform.rotation * Vec3::X).truncate();
+fn draw_direction_arrow(gizmos: &mut Gizmos, pose: &Pose, length: f32, color: Color) {
+    let position = pose.translation.truncate();
+    let direction = (pose.rotation * Vec3::X).truncate();
     gizmos.arrow_2d(position, position + direction * length, color);
 }
 
-struct Playback {
-    timer: Timer,
-    step_idx: usize,
-}
-
-impl Default for Playback {
-    fn default() -> Self {
-        Self {
-            timer: Timer::from_seconds(0.1, TimerMode::Repeating),
-            step_idx: 0,
-        }
-    }
-}
-
-// TODO: This functionality should be moved into the plugin.
-fn simple_playback(world: &mut World, mut state: Local<Playback>) {
-    state.timer.tick(world.resource::<Time>().delta());
-    if !state.timer.just_finished() {
-        return;
-    }
-
-    let simulation = world.query::<&Simulation>().single(world).unwrap();
-    let Some(step) = simulation.steps().get(state.step_idx).cloned() else {
-        info!("Restarting playback");
-        state.step_idx = 0;
-        // Init steps are used to reset the simulation to the initial state.
-        for command in simulation.init_step().commands.clone() {
-            command.apply(world);
-        }
-        return;
-    };
-    state.step_idx += 1;
-
-    // Apply comamnds for changes in this simulation step to the main world.
-    for command in step.commands {
-        command.apply(world);
-    }
-}
-
-/// Generates a random transform within the given position bounds.
-fn random_transform(rng: &mut impl Rng, position_bounds: Rect) -> Transform {
-    Transform {
+/// Generates a random axis-aligned pose within the given position bounds,
+fn random_axis_aligned_pose(rng: &mut impl Rng, position_bounds: Rect) -> Pose {
+    Pose {
         translation: Vec3::new(
             rng.gen_range(position_bounds.min.x..=position_bounds.max.x),
             rng.gen_range(position_bounds.min.y..=position_bounds.max.y),
             0.0,
         ),
-        rotation: Quat::from_rotation_z(rng.gen_range(0.0..(std::f32::consts::PI * 2.0))),
-        scale: Vec3::ONE,
+        rotation: Quat::from_rotation_z(rng.gen_range(0..4) as f32 * std::f32::consts::FRAC_PI_2),
     }
 }
