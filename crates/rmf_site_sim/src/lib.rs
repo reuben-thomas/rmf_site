@@ -17,6 +17,7 @@
 
 pub mod compute;
 pub mod event;
+pub mod playback;
 pub mod schedule;
 pub mod simulation;
 pub mod sync;
