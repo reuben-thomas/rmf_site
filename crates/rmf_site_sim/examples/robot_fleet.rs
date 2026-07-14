@@ -176,45 +176,49 @@ fn planner(
     let time_now = clock.now();
     for (robot, start_pose, robot_name, request) in robots.iter() {
         let target_pose = goals.get(request.goal).unwrap();
-
-        let tangent_scale = start_pose.translation.distance(target_pose.translation);
-        let curve = CubicHermite::new(
-            [start_pose.translation, target_pose.translation],
-            [
-                start_pose.rotation * Vec3::X * tangent_scale,
-                target_pose.rotation * Vec3::X * tangent_scale,
-            ],
-        )
-        .to_curve()
-        .unwrap();
-
-        let travel_duration = Duration::from_secs(10);
-        let points = (0..=TRAJECTORY_INTERPOLATION_STEPS)
-            .map(|current_step| {
-                let progress = current_step as f32 / TRAJECTORY_INTERPOLATION_STEPS as f32;
-                let velocity = curve.velocity(progress);
-                TrajectoryPoint {
-                    time: SimulationTime::new(
-                        time_now.elapsed() + travel_duration.mul_f32(progress),
-                    ),
-                    pose: Pose {
-                        translation: curve.position(progress),
-                        rotation: Quat::from_rotation_z(velocity.y.atan2(velocity.x)),
-                    },
-                }
-            })
-            .collect();
-
-        let trajectory = Trajectory { points };
+        let trajectory = plan_trajectory(start_pose, target_pose, time_now);
         change.schedule_now(move |world: &mut World| {
             world.entity_mut(robot).insert(trajectory);
         });
-
         info!(
             "[planner] Planned trajectory for {} at {:?}",
             robot_name, time_now
         );
     }
+}
+
+fn plan_trajectory(
+    start_pose: &Pose,
+    target_pose: &Pose,
+    start_time: SimulationTime,
+) -> Trajectory {
+    let tangent_scale = start_pose.translation.distance(target_pose.translation);
+    let curve = CubicHermite::new(
+        [start_pose.translation, target_pose.translation],
+        [
+            start_pose.rotation * Vec3::X * tangent_scale,
+            target_pose.rotation * Vec3::X * tangent_scale,
+        ],
+    )
+    .to_curve()
+    .unwrap();
+
+    let travel_duration = Duration::from_secs(10);
+    let points = (0..=TRAJECTORY_INTERPOLATION_STEPS)
+        .map(|current_step| {
+            let progress = current_step as f32 / TRAJECTORY_INTERPOLATION_STEPS as f32;
+            let velocity = curve.velocity(progress);
+            TrajectoryPoint {
+                time: SimulationTime::new(start_time.elapsed() + travel_duration.mul_f32(progress)),
+                pose: Pose {
+                    translation: curve.position(progress),
+                    rotation: Quat::from_rotation_z(velocity.y.atan2(velocity.x)),
+                },
+            }
+        })
+        .collect();
+
+    Trajectory { points }
 }
 
 /// A robot controller that schedules transform updates along a robot's trajectory,
@@ -289,7 +293,7 @@ fn draw_trajectory(trajectories: Query<&Trajectory, With<Robot>>, mut gizmos: Gi
                 .points
                 .iter()
                 .map(|point| point.pose.translation.truncate()),
-            Color::from(basic::BLUE).with_alpha(0.3),
+            Color::from(basic::BLUE).with_alpha(0.2),
         );
         for point in &trajectory.points {
             draw_direction_arrow(&mut gizmos, &point.pose, 10.0, Color::from(basic::BLUE));
