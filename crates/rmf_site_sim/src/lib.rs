@@ -15,6 +15,17 @@
  *
 */
 
+//! Discrete event simulation for the [rmf_site_editor](https://github.com/open-rmf/rmf_site).
+//!
+//! TODO
+//! | Concept | Representation | Description |
+//! | --- | --- | --- |
+//! | System state | Bevy `World` | -
+//! | Model | Bevy system | -
+//! | Event | [`event::DiscreteEvent`] / [`bevy::prelude::Command`] | -
+//! | Event scheduling | [`event::DiscreteChangeWriter`], [`event::DiscreteComponentWriter`], [`event::DiscreteResourceWriter`] | -
+//! | Future event list | [`event::DiscreteEvents`] | -
+//! | Simulation output | [`SimulationStep`] | - 
 pub mod compute;
 pub mod event;
 pub mod playback;
