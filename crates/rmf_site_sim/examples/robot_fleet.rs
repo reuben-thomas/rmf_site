@@ -15,7 +15,7 @@ use bevy::ecs::entity::EntityHashSet;
 use bevy::prelude::*;
 use rand::Rng;
 use rmf_site_sim::compute::SimulationComputeClock;
-use rmf_site_sim::event::DiscreteChange;
+use rmf_site_sim::event::{DiscreteChangeWriter, DiscreteComponentWriter};
 use rmf_site_sim::playback::SimulationPlaybackPlugin;
 use rmf_site_sim::time::SimulationTime;
 use rmf_site_sim::{SimulationBuilder, SimulationPlugin};
@@ -106,7 +106,7 @@ fn setup(world: &mut World) {
         .register_component::<Waypoint>()
         .register_resource::<ActiveRequestEntities>()
         // Systems representing models used to compute the simulation.
-        .add_compute_systems((request_generator, planner, robot))
+        .add_simulation_model_systems((request_generator, planner, robot))
         .build(world);
 
     world.spawn(simulation);
@@ -135,7 +135,7 @@ fn request_generator(
     robots: Query<(Entity, &Name), With<Robot>>,
     waypoints: Query<(Entity, &Name), With<Waypoint>>,
     active_request_entities: Res<ActiveRequestEntities>,
-    mut discrete_change: DiscreteChange,
+    mut changes: DiscreteChangeWriter,
 ) {
     let mut idle_waypoints = waypoints
         .iter()
@@ -153,7 +153,7 @@ fn request_generator(
         let time = SimulationTime::new(Duration::from_secs(
             REQUEST_ARRIVAL_STAGGER_SECONDS * schedule_number,
         ));
-        discrete_change.schedule(time, move |world: &mut World| {
+        changes.write(time, move |world: &mut World| {
             world.entity_mut(robot).insert(Request { goal });
             let mut active_requests = world.resource_mut::<ActiveRequestEntities>();
             active_requests.robots.insert(robot);
@@ -171,15 +171,13 @@ fn planner(
     robots: Query<(Entity, &Pose, &Name, &Request), (With<Robot>, Without<Trajectory>)>,
     goals: Query<&Pose, With<Waypoint>>,
     clock: Res<SimulationComputeClock>,
-    mut change: DiscreteChange,
+    mut trajectories: DiscreteComponentWriter<Trajectory>,
 ) {
     let time_now = clock.now();
     for (robot, start_pose, robot_name, request) in robots.iter() {
         let target_pose = goals.get(request.goal).unwrap();
         let trajectory = plan_trajectory(start_pose, target_pose, time_now);
-        change.schedule_now(move |world: &mut World| {
-            world.entity_mut(robot).insert(trajectory);
-        });
+        trajectories.write_now(robot, trajectory);
         info!(
             "[planner] Planned trajectory for {} at {:?}",
             robot_name, time_now
@@ -225,7 +223,8 @@ fn plan_trajectory(
 /// and marks the goal waypoint as visited when the trajectory ends.
 fn robot(
     robots: Query<(Entity, &Request, &Trajectory, &Name), With<Robot>>,
-    mut change: DiscreteChange,
+    mut poses: DiscreteComponentWriter<Pose>,
+    mut waypoints: DiscreteComponentWriter<Waypoint>,
     clock: Res<SimulationComputeClock>,
 ) {
     let now = clock.now();
@@ -237,20 +236,14 @@ fn robot(
         }
 
         for point in trajectory.points.iter().filter(|point| point.time > now) {
-            let pose = point.pose;
-            change.schedule(point.time, move |world: &mut World| {
-                world.entity_mut(robot).insert(pose);
-            });
+            poses.write(point.time, robot, point.pose);
             info!(
                 "[robot] Scheduled pose update for {} at {:?}",
                 robot_name, point.time
             );
 
             if point.time == end.time {
-                let goal = request.goal;
-                change.schedule(end.time, move |world: &mut World| {
-                    *world.get_mut::<Waypoint>(goal).unwrap() = Waypoint::Visited;
-                });
+                waypoints.write(end.time, request.goal, Waypoint::Visited);
                 info!(
                     "[robot] Scheduled waypoint visit for {} at {:?}",
                     robot_name, point.time

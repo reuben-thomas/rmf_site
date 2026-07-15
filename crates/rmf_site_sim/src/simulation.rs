@@ -1,8 +1,7 @@
 use crate::compute::{SimulationComputePlugin, compute_async};
 use crate::event::DiscreteEvent;
 use crate::schedule::{
-    ScheduleBuilder, SimulationComputeSet, SimulationComputeStep, SimulationStartup,
-    SystemExecutionOrdering,
+    ScheduleBuilder, SimulationModelSystemExec, SimulationStartup, SystemExecutionOrdering,
 };
 use crate::sync::Extractor;
 use crate::time::SimulationTime;
@@ -26,7 +25,7 @@ impl Plugin for SimulationPlugin {
 pub struct SimulationBuilder {
     extractor: Extractor,
     startup_schedule_builder: ScheduleBuilder,
-    compute_schedule_builder: ScheduleBuilder,
+    model_system_schedule_builder: ScheduleBuilder,
     plugins: Vec<PluginFactory>,
 }
 
@@ -44,7 +43,7 @@ impl SimulationBuilder {
         Self {
             extractor: Extractor::default(),
             startup_schedule_builder: ScheduleBuilder::new(SimulationStartup),
-            compute_schedule_builder: ScheduleBuilder::new(SimulationComputeStep)
+            model_system_schedule_builder: ScheduleBuilder::new(SimulationModelSystemExec)
                 .set_ordering(SystemExecutionOrdering::Total),
             plugins: Vec::new(),
         }
@@ -79,16 +78,14 @@ impl SimulationBuilder {
         self
     }
 
-    // TODO: Rename to add_model_systems instead?
     /// Adds a set of systems to be executed when computing simulation steps.
     /// These systems should represent models in the discrete event simulation.
-    pub fn add_compute_systems<M>(
+    pub fn add_simulation_model_systems<M>(
         mut self,
         systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
     ) -> Self {
-        self.compute_schedule_builder = self
-            .compute_schedule_builder
-            .add_systems_in_set(systems, SimulationComputeSet::ExecuteSystems);
+        self.model_system_schedule_builder =
+            self.model_system_schedule_builder.add_systems(systems);
         self
     }
 
@@ -120,7 +117,7 @@ impl Simulation {
         let (update_sender, update_receiver) = unbounded();
         let compute_plugin = SimulationComputePlugin {
             startup_schedule: builder.startup_schedule_builder.build(),
-            compute_schedule: builder.compute_schedule_builder.build(),
+            system_schedule: builder.model_system_schedule_builder.build(),
             update_sender,
         };
         compute_async(compute_plugin, entities, init_step.clone(), builder.plugins);

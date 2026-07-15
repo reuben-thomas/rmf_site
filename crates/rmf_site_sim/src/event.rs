@@ -5,6 +5,7 @@ use bevy::ecs::system::{Command, Deferred, SystemBuffer, SystemMeta, SystemParam
 use bevy::prelude::*;
 use bevy::utils::synccell::SyncCell;
 use std::cmp::Ordering;
+use std::marker::PhantomData;
 
 /// A unique change applied on the world at a discrete simulation time.
 pub trait DiscreteEvent: Send + 'static {
@@ -75,36 +76,33 @@ impl DiscreteEvents {
     }
 
     /// The nearest scheduled event time, which is always in the future.
-    fn next_time(&self) -> Option<SimulationTime> {
+    pub fn next_time(&self) -> Option<SimulationTime> {
         self.scheduled.as_ref().map(|(nearest, _)| *nearest)
     }
 
     /// Removes and returns the events scheduled at the specified time.
-    fn take_events_at(&mut self, time: SimulationTime) -> Vec<Box<dyn DiscreteEvent>> {
-        let mut events = std::mem::take(self.instant.get());
-        if let Some((scheduled_time, _)) = &self.scheduled
-            && *scheduled_time == time
-        {
-            let (_, scheduled) = self.scheduled.take().unwrap();
-            events.extend(SyncCell::to_inner(scheduled));
+    fn take_scheduled_at(&mut self, time: SimulationTime) -> Vec<Box<dyn DiscreteEvent>> {
+        match &self.scheduled {
+            Some((scheduled_time, _)) if *scheduled_time == time => {
+                let (_, scheduled) = self.scheduled.take().unwrap();
+                SyncCell::to_inner(scheduled)
+            }
+            _ => Vec::new(),
         }
-        events
     }
 
-    /// Adds the next scheduled event time to the clock.
-    pub(crate) fn sync_with_clock(
-        events: Res<DiscreteEvents>,
-        mut clock: ResMut<SimulationComputeClock>,
-    ) {
-        if let Some(time) = events.next_time() {
-            clock.try_add_pending(time);
-        }
+    /// Removes and returns the first instant event, discarding the others.
+    fn take_first_instant(&mut self) -> Option<Box<dyn DiscreteEvent>> {
+        std::mem::take(self.instant.get()).into_iter().next()
     }
 }
 
-pub fn execute_events(world: &mut World) {
+/// Executes all events scheduled at the current simulation time.
+pub fn execute_scheduled_events(world: &mut World) {
     let now = world.resource::<SimulationComputeClock>().now();
-    let events = world.resource_mut::<DiscreteEvents>().take_events_at(now);
+    let events = world
+        .resource_mut::<DiscreteEvents>()
+        .take_scheduled_at(now);
     if events.is_empty() {
         return;
     }
@@ -117,78 +115,140 @@ pub fn execute_events(world: &mut World) {
     }
 }
 
-/// Schedules [`DiscreteEvent`]s, either in the current time step or in the future.
-#[derive(SystemParam)]
-pub struct DiscreteChange<'w, 's> {
-    buffer: Deferred<'s, DiscreteChangeBuffer>,
-    clock: Res<'w, SimulationComputeClock>,
-    events: Res<'w, DiscreteEvents>,
+pub fn execute_first_instant_event(world: &mut World) -> bool {
+    let Some(event) = world.resource_mut::<DiscreteEvents>().take_first_instant() else {
+        return false;
+    };
+
+    world
+        .resource_mut::<SimulationEventBuffer>()
+        .extend([event.clone()]);
+    event.apply(world);
+    true
 }
 
-impl DiscreteChange<'_, '_> {
-    pub fn schedule(&mut self, time: SimulationTime, event: impl DiscreteEvent) {
-        let time_now = self.clock.now();
-        match time.cmp(&time_now) {
-            Ordering::Less => panic!(
-                "Tried to schedule an event at time {time:?} \
-                that is earlier than the current time {time_now:?} \
-                and will never be executed.",
-            ),
-            Ordering::Equal => self.buffer.instant.push(Box::new(event)),
-            Ordering::Greater => {
-                if !self.may_schedule(time) {
-                    return;
-                }
-                match &mut self.buffer.scheduled {
-                    Some((nearest, events)) => match time.cmp(nearest) {
-                        Ordering::Less => {
-                            *nearest = time;
-                            *events = vec![Box::new(event)];
-                        }
-                        Ordering::Equal => events.push(Box::new(event)),
-                        Ordering::Greater => {}
-                    },
-                    None => {
-                        self.buffer.scheduled = Some((time, vec![Box::new(event)]));
-                    }
-                }
-            }
-        }
+#[derive(SystemParam)]
+pub struct DiscreteChangeWriter<'w, 's> {
+    buffer: Deferred<'s, DiscreteEventBuffer>,
+    clock: Res<'w, SimulationComputeClock>,
+}
+
+impl DiscreteChangeWriter<'_, '_> {
+    pub fn write(&mut self, time: SimulationTime, event: impl DiscreteEvent) {
+        self.buffer.queue(self.clock.now(), time, Box::new(event));
     }
 
-    pub fn schedule_now(&mut self, event: impl DiscreteEvent) {
-        self.buffer.instant.push(Box::new(event));
+    pub fn write_now(&mut self, event: impl DiscreteEvent) {
+        self.buffer.queue_now(Box::new(event));
+    }
+}
+
+#[derive(SystemParam)]
+pub struct DiscreteComponentWriter<'w, 's, T: Component + Clone> {
+    buffer: Deferred<'s, DiscreteEventBuffer>,
+    clock: Res<'w, SimulationComputeClock>,
+    _marker: PhantomData<T>,
+}
+
+impl<T: Component + Clone> DiscreteComponentWriter<'_, '_, T> {
+    pub fn write(&mut self, time: SimulationTime, entity: Entity, value: T) {
+        self.buffer.queue(
+            self.clock.now(),
+            time,
+            Box::new(DiscreteComponentWrite { entity, value }),
+        );
     }
 
-    /// Identify if an event can be scheduled at the given time.
-    pub fn may_schedule(&self, time: SimulationTime) -> bool {
-        match time.cmp(&self.clock.now()) {
-            Ordering::Less => false,
-            Ordering::Equal => true,
-            Ordering::Greater => {
-                if let Some((next_time, _)) = &self.buffer.scheduled
-                    && time > *next_time
-                {
-                    return false;
-                }
-                if let Some(next_time) = self.events.next_time()
-                    && time > next_time
-                {
-                    return false;
-                }
-                true
-            }
-        }
+    pub fn write_now(&mut self, entity: Entity, value: T) {
+        self.buffer
+            .queue_now(Box::new(DiscreteComponentWrite { entity, value }));
+    }
+}
+
+#[derive(Clone)]
+struct DiscreteComponentWrite<T: Component + Clone> {
+    entity: Entity,
+    value: T,
+}
+
+// TODO: Handle failures
+impl<T: Component + Clone> Command for DiscreteComponentWrite<T> {
+    fn apply(self, world: &mut World) {
+        world.entity_mut(self.entity).insert(self.value);
+    }
+}
+
+#[derive(SystemParam)]
+pub struct DiscreteResourceWriter<'w, 's, R: Resource + Clone> {
+    buffer: Deferred<'s, DiscreteEventBuffer>,
+    clock: Res<'w, SimulationComputeClock>,
+    _marker: PhantomData<R>,
+}
+
+impl<R: Resource + Clone> DiscreteResourceWriter<'_, '_, R> {
+    pub fn write(&mut self, time: SimulationTime, value: R) {
+        self.buffer.queue(
+            self.clock.now(),
+            time,
+            Box::new(DiscreteResourceWrite { value }),
+        );
+    }
+
+    pub fn write_now(&mut self, value: R) {
+        self.buffer
+            .queue_now(Box::new(DiscreteResourceWrite { value }));
+    }
+}
+
+#[derive(Clone)]
+struct DiscreteResourceWrite<R: Resource + Clone> {
+    value: R,
+}
+
+// TODO: Fail if the resource already exists?
+impl<R: Resource + Clone> Command for DiscreteResourceWrite<R> {
+    fn apply(self, world: &mut World) {
+        world.insert_resource(self.value);
     }
 }
 
 #[derive(Default)]
-pub struct DiscreteChangeBuffer {
+pub struct DiscreteEventBuffer {
     instant: Vec<Box<dyn DiscreteEvent>>,
     scheduled: Option<(SimulationTime, Vec<Box<dyn DiscreteEvent>>)>,
 }
 
-impl SystemBuffer for DiscreteChangeBuffer {
+impl DiscreteEventBuffer {
+    fn queue(&mut self, now: SimulationTime, time: SimulationTime, event: Box<dyn DiscreteEvent>) {
+        match time.cmp(&now) {
+            Ordering::Less => panic!(
+                "Tried to schedule an event at time {time:?} \
+                that is earlier than the current time {now:?} \
+                and will never be executed.",
+            ),
+            Ordering::Equal => self.instant.push(event),
+            Ordering::Greater => match &mut self.scheduled {
+                Some((nearest, events)) => match time.cmp(nearest) {
+                    Ordering::Less => {
+                        *nearest = time;
+                        *events = vec![event];
+                    }
+                    Ordering::Equal => events.push(event),
+                    Ordering::Greater => {}
+                },
+                None => {
+                    self.scheduled = Some((time, vec![event]));
+                }
+            },
+        }
+    }
+
+    fn queue_now(&mut self, event: Box<dyn DiscreteEvent>) {
+        self.instant.push(event);
+    }
+}
+
+impl SystemBuffer for DiscreteEventBuffer {
     fn apply(&mut self, _system_meta: &SystemMeta, world: &mut World) {
         if self.instant.is_empty() && self.scheduled.is_none() {
             return;
