@@ -10,22 +10,9 @@ use bevy::ecs::world::World;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
 pub struct SimulationStartup;
 
-/// The schedule containing systems representing models in the simulation, that must be run once per simulation step.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
-pub struct SimulationComputeStep;
+pub struct SimulationModelSystemExec;
 
-/// System sets that order execution within a [`SimulationComputeStep`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SystemSet)]
-pub enum SimulationComputeSet {
-    /// Execute the selected event
-    ExecuteEvent,
-    ExecuteSystems,
-    ExecuteInstantEvents,
-    SendSimulationStep,
-    IncrementComputeClock,
-}
-
-/// Determines how system executions are ordered within a [`SimulationComputeStep`].
 #[derive(Default, Clone)]
 pub enum SystemExecutionOrdering {
     /// Systems may run in any order based on dependencies and user-defined ordering constraints.
@@ -68,7 +55,7 @@ impl ScheduleBuilder {
         systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
         set: impl SystemSet,
     ) -> Self {
-        self.add_systems(systems.into_configs().in_set(set))
+        self.add_systems(systems.in_set(set))
     }
 
     /// Sets the execution ordering policy for the schedule.

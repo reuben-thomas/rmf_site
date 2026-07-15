@@ -1,5 +1,5 @@
-use crate::event::{DiscreteEvents, execute_events};
-use crate::schedule::{SimulationComputeSet, SimulationComputeStep, SimulationStartup};
+use crate::event::{DiscreteEvents, execute_first_instant_event, execute_scheduled_events};
+use crate::schedule::{SimulationModelSystemExec, SimulationStartup};
 use crate::simulation::{PluginFactory, SimulationComputeUpdate, SimulationState, SimulationStep};
 use crate::sync::{SimulationEventBuffer, StateUpdateSender};
 use crate::time::SimulationTime;
@@ -20,7 +20,20 @@ pub fn compute_async(
     AsyncComputeTaskPool::get_or_init(TaskPool::new)
         .spawn(async move {
             let result = catch_unwind(AssertUnwindSafe(move || {
-                compute(compute_plugin, init_entities, init_step, plugins);
+                let mut app = App::new();
+                compute_plugin.build(&mut app);
+
+                let world = app.world_mut();
+                for entity in &init_entities {
+                    spawn_at(world, *entity);
+                }
+                for event in init_step.events {
+                    event.apply(world);
+                }
+                for plugin in plugins {
+                    plugin(&mut app);
+                }
+                app.run();
             }));
             let state = match result {
                 Ok(()) => SimulationState::Complete,
@@ -31,32 +44,10 @@ pub fn compute_async(
         .detach();
 }
 
-fn compute(
-    compute_plugin: SimulationComputePlugin,
-    init_entities: Vec<Entity>,
-    init_step: SimulationStep,
-    plugins: Vec<PluginFactory>,
-) {
-    let mut app = App::new();
-    compute_plugin.build(&mut app);
-
-    let world = app.world_mut();
-    for entity in &init_entities {
-        spawn_at(world, *entity);
-    }
-    for event in init_step.events {
-        event.apply(world);
-    }
-    for plugin in plugins {
-        plugin(&mut app);
-    }
-    app.run();
-}
-
 /// Configures an [`App`] to compute [`SimulationStep`]s for a simulation.
 pub struct SimulationComputePlugin {
     pub startup_schedule: Schedule,
-    pub compute_schedule: Schedule,
+    pub system_schedule: Schedule,
     pub update_sender: Sender<SimulationComputeUpdate>,
 }
 
@@ -67,53 +58,44 @@ impl SimulationComputePlugin {
             .init_resource::<SimulationEventBuffer>()
             .insert_resource(StateUpdateSender::new(self.update_sender));
 
-        let startup_schedule = self.startup_schedule;
-        let mut system_schedule = self.compute_schedule;
-        // TODO: Should the following configuration logic be within the builder?
-        system_schedule.configure_sets(
-            (
-                SimulationComputeSet::ExecuteEvent,
-                SimulationComputeSet::ExecuteSystems,
-                SimulationComputeSet::ExecuteInstantEvents,
-                SimulationComputeSet::SendSimulationStep,
-                SimulationComputeSet::IncrementComputeClock,
-            )
-                .chain(),
-        );
-        system_schedule.add_systems((
-            execute_events.in_set(SimulationComputeSet::ExecuteEvent),
-            execute_events.in_set(SimulationComputeSet::ExecuteInstantEvents),
-            SimulationEventBuffer::send_step.in_set(SimulationComputeSet::SendSimulationStep),
-            (
-                DiscreteEvents::sync_with_clock,
-                SimulationComputeClock::advance,
-            )
-                .chain()
-                .in_set(SimulationComputeSet::IncrementComputeClock),
-        ));
-
-        app.add_schedule(startup_schedule);
-        app.add_schedule(system_schedule);
+        app.add_schedule(self.startup_schedule);
+        app.add_schedule(self.system_schedule);
         app.set_runner(run_compute_simulation);
     }
 }
 
 fn run_compute_simulation(mut app: App) -> AppExit {
-    app.world_mut().run_schedule(SimulationStartup);
+    let world = app.world_mut();
+    world.run_schedule(SimulationStartup);
     loop {
-        app.world_mut().run_schedule(SimulationComputeStep);
+        compute_time_step(world);
+        let _ = world.run_system_cached(SimulationEventBuffer::send_step);
+        let _ = world.run_system_cached(sync_with_clock);
+        let _ = world.run_system_cached(SimulationComputeClock::advance);
 
         // TODO: This should be a generic trait with a builtin impl,
         // e.g. crate::simulation::EndCondition
-        if app
-            .world()
-            .resource::<SimulationComputeClock>()
-            .is_complete()
-        {
+        if world.resource::<SimulationComputeClock>().is_complete() {
             break;
         }
     }
     AppExit::Success
+}
+
+fn compute_time_step(world: &mut World) {
+    execute_scheduled_events(world);
+    loop {
+        world.run_schedule(SimulationModelSystemExec);
+        if !execute_first_instant_event(world) {
+            break;
+        }
+    }
+}
+
+pub fn sync_with_clock(events: Res<DiscreteEvents>, mut clock: ResMut<SimulationComputeClock>) {
+    if let Some(time) = events.next_time() {
+        clock.try_add_pending(time);
+    }
 }
 
 /// Clock for tracking the current simulation time being computed, as well as pending times to be processed.
