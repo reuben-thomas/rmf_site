@@ -1,10 +1,10 @@
 use bevy::ecs::schedule::{
-    InternedScheduleLabel, IntoScheduleConfigs, NodeId, Schedule, ScheduleBuildError,
-    ScheduleBuildPass, ScheduleConfigs, ScheduleGraph, ScheduleLabel, SystemSet, graph::DiGraph,
+    InternedScheduleLabel, IntoScheduleConfigs, LogLevel, NodeId, Schedule, ScheduleBuildError,
+    ScheduleBuildPass, ScheduleBuildSettings, ScheduleConfigs, ScheduleGraph, ScheduleLabel,
+    SystemSet, graph::DiGraph,
 };
 use bevy::ecs::system::ScheduleSystem;
 use bevy::ecs::world::World;
-use std::sync::Arc;
 
 /// The schedule that runs once when the a simulation is started.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
@@ -25,17 +25,6 @@ pub enum SimulationComputeSet {
     IncrementComputeClock,
 }
 
-/// Systems that can be added to a simulation schedule.
-pub trait SimulationScheduleConfigs<M>:
-    IntoScheduleConfigs<ScheduleSystem, M> + Clone + Send + Sync + 'static
-{
-}
-
-impl<M, T> SimulationScheduleConfigs<M> for T where
-    T: IntoScheduleConfigs<ScheduleSystem, M> + Clone + Send + Sync + 'static
-{
-}
-
 /// Determines how system executions are ordered within a [`SimulationComputeStep`].
 #[derive(Default, Clone)]
 pub enum SystemExecutionOrdering {
@@ -46,13 +35,10 @@ pub enum SystemExecutionOrdering {
     Total,
 }
 
-type ScheduleConfigFactory = Arc<dyn Fn() -> ScheduleConfigs<ScheduleSystem> + Send + Sync>;
-
 /// Builds a [`Schedule`] with a set of systems and an execution ordering policy.
-#[derive(Clone)]
 pub struct ScheduleBuilder {
     label: InternedScheduleLabel,
-    schedule_config_factories: Vec<ScheduleConfigFactory>,
+    configs: Option<ScheduleConfigs<ScheduleSystem>>,
     ordering: SystemExecutionOrdering,
 }
 
@@ -61,28 +47,28 @@ impl ScheduleBuilder {
     pub fn new(label: impl ScheduleLabel) -> Self {
         Self {
             label: label.intern(),
-            schedule_config_factories: Vec::new(),
+            configs: None,
             ordering: SystemExecutionOrdering::default(),
         }
     }
 
     /// Adds systems to the schedule.
-    pub fn add_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
-        self.schedule_config_factories
-            .push(Arc::new(move || systems.clone().into_configs()));
+    pub fn add_systems<M>(mut self, systems: impl IntoScheduleConfigs<ScheduleSystem, M>) -> Self {
+        let configs = systems.into_configs();
+        self.configs = Some(match self.configs.take() {
+            Some(existing) => (existing, configs).into_configs(),
+            None => configs,
+        });
         self
     }
 
     /// Adds systems to the schedule for a system set.
     pub fn add_systems_in_set<M>(
-        mut self,
-        systems: impl SimulationScheduleConfigs<M>,
-        set: impl SystemSet + Clone,
+        self,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
+        set: impl SystemSet,
     ) -> Self {
-        self.schedule_config_factories.push(Arc::new(move || {
-            systems.clone().into_configs().in_set(set.clone())
-        }));
-        self
+        self.add_systems(systems.into_configs().in_set(set))
     }
 
     /// Sets the execution ordering policy for the schedule.
@@ -92,10 +78,17 @@ impl ScheduleBuilder {
     }
 
     /// Builds a new [`Schedule`] containing the added systems, ordered by the configured policy.
-    pub fn build(&self) -> Schedule {
+    pub fn build(self) -> Schedule {
         let mut schedule = Schedule::new(self.label);
-        for factory in &self.schedule_config_factories {
-            schedule.add_systems(factory());
+        schedule.set_build_settings(ScheduleBuildSettings {
+            ambiguity_detection: LogLevel::Error,
+            hierarchy_detection: LogLevel::Warn,
+            auto_insert_apply_deferred: true,
+            use_shortnames: true,
+            report_sets: true,
+        });
+        if let Some(configs) = self.configs {
+            schedule.add_systems(configs);
         }
         match self.ordering {
             SystemExecutionOrdering::Total => {

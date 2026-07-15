@@ -1,17 +1,17 @@
 use crate::compute::{SimulationComputePlugin, compute_async};
 use crate::event::DiscreteEvent;
 use crate::schedule::{
-    ScheduleBuilder, SimulationComputeSet, SimulationComputeStep, SimulationScheduleConfigs,
-    SimulationStartup, SystemExecutionOrdering,
+    ScheduleBuilder, SimulationComputeSet, SimulationComputeStep, SimulationStartup,
+    SystemExecutionOrdering,
 };
 use crate::sync::Extractor;
 use crate::time::SimulationTime;
 use bevy::app::Plugins;
+use bevy::ecs::system::ScheduleSystem;
 use bevy::prelude::*;
 use bevy::utils::synccell::SyncCell;
 use crossbeam_channel::{Receiver, unbounded};
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 /// Plugin for computing discrete event simulations.
 pub struct SimulationPlugin;
@@ -23,7 +23,6 @@ impl Plugin for SimulationPlugin {
 }
 
 /// Builds a [`Simulation`].
-#[derive(Clone, Component)]
 pub struct SimulationBuilder {
     extractor: Extractor,
     startup_schedule_builder: ScheduleBuilder,
@@ -52,12 +51,9 @@ impl SimulationBuilder {
     }
 
     /// Adds a plugin to the simulation [`SubApp`].
-    pub fn add_plugins<M>(
-        mut self,
-        plugins: impl Plugins<M> + Clone + Send + Sync + 'static,
-    ) -> Self {
-        self.plugins.push(Arc::new(move |app| {
-            app.add_plugins(plugins.clone());
+    pub fn add_plugins<M>(mut self, plugins: impl Plugins<M> + Send + 'static) -> Self {
+        self.plugins.push(Box::new(move |app| {
+            app.add_plugins(plugins);
         }));
         self
     }
@@ -75,7 +71,10 @@ impl SimulationBuilder {
     }
 
     /// Adds a set of systems to be executed during simulation startup.
-    pub fn add_startup_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
+    pub fn add_startup_systems<M>(
+        mut self,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
+    ) -> Self {
         self.startup_schedule_builder = self.startup_schedule_builder.add_systems(systems);
         self
     }
@@ -83,7 +82,10 @@ impl SimulationBuilder {
     // TODO: Rename to add_model_systems instead?
     /// Adds a set of systems to be executed when computing simulation steps.
     /// These systems should represent models in the discrete event simulation.
-    pub fn add_compute_systems<M>(mut self, systems: impl SimulationScheduleConfigs<M>) -> Self {
+    pub fn add_compute_systems<M>(
+        mut self,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
+    ) -> Self {
         self.compute_schedule_builder = self
             .compute_schedule_builder
             .add_systems_in_set(systems, SimulationComputeSet::ExecuteSystems);
@@ -91,13 +93,13 @@ impl SimulationBuilder {
     }
 
     /// Builds a new [`Simulation`].
-    pub fn build(&self, world: &World) -> Simulation {
-        Simulation::new(self.clone(), world)
+    pub fn build(self, world: &World) -> Simulation {
+        Simulation::new(self, world)
     }
 }
 
 /// Adds one or more plugins to the target world's [`App`].
-pub type PluginFactory = Arc<dyn Fn(&mut App) + Send + Sync>;
+pub type PluginFactory = Box<dyn FnOnce(&mut App) + Send>;
 
 /// A unique discrete event simulation.
 #[derive(Component)]
@@ -117,8 +119,8 @@ impl Simulation {
         };
         let (update_sender, update_receiver) = unbounded();
         let compute_plugin = SimulationComputePlugin {
-            startup_schedule_builder: builder.startup_schedule_builder,
-            compute_schedule_builder: builder.compute_schedule_builder,
+            startup_schedule: builder.startup_schedule_builder.build(),
+            compute_schedule: builder.compute_schedule_builder.build(),
             update_sender,
         };
         compute_async(compute_plugin, entities, init_step.clone(), builder.plugins);

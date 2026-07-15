@@ -1,7 +1,5 @@
 use crate::event::{DiscreteEvents, execute_events};
-use crate::schedule::{
-    ScheduleBuilder, SimulationComputeSet, SimulationComputeStep, SimulationStartup,
-};
+use crate::schedule::{SimulationComputeSet, SimulationComputeStep, SimulationStartup};
 use crate::simulation::{PluginFactory, SimulationComputeUpdate, SimulationState, SimulationStep};
 use crate::sync::{SimulationEventBuffer, StateUpdateSender};
 use crate::time::SimulationTime;
@@ -40,7 +38,7 @@ fn compute(
     plugins: Vec<PluginFactory>,
 ) {
     let mut app = App::new();
-    app.add_plugins(compute_plugin);
+    compute_plugin.build(&mut app);
 
     let world = app.world_mut();
     for entity in &init_entities {
@@ -49,28 +47,28 @@ fn compute(
     for event in init_step.events {
         event.apply(world);
     }
-    for plugin in &plugins {
+    for plugin in plugins {
         plugin(&mut app);
     }
     app.run();
 }
 
-/// Plugin that computes [`SimulationStep`]s for a simulation.
+/// Configures an [`App`] to compute [`SimulationStep`]s for a simulation.
 pub struct SimulationComputePlugin {
-    pub startup_schedule_builder: ScheduleBuilder,
-    pub compute_schedule_builder: ScheduleBuilder,
+    pub startup_schedule: Schedule,
+    pub compute_schedule: Schedule,
     pub update_sender: Sender<SimulationComputeUpdate>,
 }
 
-impl Plugin for SimulationComputePlugin {
-    fn build(&self, app: &mut App) {
+impl SimulationComputePlugin {
+    fn build(self, app: &mut App) {
         app.init_resource::<SimulationComputeClock>()
             .init_resource::<DiscreteEvents>()
             .init_resource::<SimulationEventBuffer>()
-            .insert_resource(StateUpdateSender::new(self.update_sender.clone()));
+            .insert_resource(StateUpdateSender::new(self.update_sender));
 
-        let startup_schedule = self.startup_schedule_builder.build();
-        let mut system_schedule = self.compute_schedule_builder.build();
+        let startup_schedule = self.startup_schedule;
+        let mut system_schedule = self.compute_schedule;
         // TODO: Should the following configuration logic be within the builder?
         system_schedule.configure_sets(
             (

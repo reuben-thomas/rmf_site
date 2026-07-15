@@ -83,10 +83,11 @@ impl DiscreteEvents {
     fn take_events_at(&mut self, time: SimulationTime) -> Vec<Box<dyn DiscreteEvent>> {
         let mut events = std::mem::take(self.instant.get());
         if let Some((scheduled_time, _)) = &self.scheduled
-            && *scheduled_time == time {
-                let (_, scheduled) = self.scheduled.take().unwrap();
-                events.extend(SyncCell::to_inner(scheduled));
-            }
+            && *scheduled_time == time
+        {
+            let (_, scheduled) = self.scheduled.take().unwrap();
+            events.extend(SyncCell::to_inner(scheduled));
+        }
         events
     }
 
@@ -166,13 +167,15 @@ impl DiscreteChange<'_, '_> {
             Ordering::Equal => true,
             Ordering::Greater => {
                 if let Some((next_time, _)) = &self.buffer.scheduled
-                    && time > *next_time {
-                        return false;
-                    }
+                    && time > *next_time
+                {
+                    return false;
+                }
                 if let Some(next_time) = self.events.next_time()
-                    && time > next_time {
-                        return false;
-                    }
+                    && time > next_time
+                {
+                    return false;
+                }
                 true
             }
         }
