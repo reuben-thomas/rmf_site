@@ -47,11 +47,17 @@ fn play(world: &mut World, mut state: Local<Play>) {
     }
 
     // TODO: Handle multiple simulations
-    let simulation = world.query::<&Simulation>().single(world).unwrap();
-    match simulation.steps().values().nth(state.step_idx) {
-        Some(step) => {
+    let mut query = world.query::<&mut Simulation>();
+    let mut simulation = query.single_mut(world).unwrap();
+    let events = simulation
+        .steps()
+        .values()
+        .nth(state.step_idx)
+        .map(|step| step.events.clone());
+    match events {
+        Some(events) => {
             state.step_idx += 1;
-            for event in step.events.clone() {
+            for event in events {
                 event.apply(world);
             }
         }
@@ -84,8 +90,10 @@ fn pause(
 
 fn reset(world: &mut World) {
     world.remove_resource::<PauseTimer>();
-    let simulation = world.query::<&Simulation>().single(world).unwrap();
-    for event in simulation.init_step().events.clone() {
+    let mut query = world.query::<&mut Simulation>();
+    let mut simulation = query.single_mut(world).unwrap();
+    let events = simulation.init_step().events.clone();
+    for event in events {
         event.apply(world);
     }
 }

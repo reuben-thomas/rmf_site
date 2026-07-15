@@ -8,6 +8,7 @@ use crate::sync::Extractor;
 use crate::time::SimulationTime;
 use bevy::app::Plugins;
 use bevy::prelude::*;
+use bevy::utils::synccell::SyncCell;
 use crossbeam_channel::{Receiver, unbounded};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -99,8 +100,8 @@ impl SimulationBuilder {
 /// A unique discrete event simulation.
 #[derive(Component)]
 pub struct Simulation {
-    init_step: SimulationStep,
-    simulation_steps: BTreeMap<SimulationTime, SimulationStep>,
+    init_step: SyncCell<SimulationStep>,
+    simulation_steps: SyncCell<BTreeMap<SimulationTime, SimulationStep>>,
     step_receiver: Receiver<(SimulationTime, SimulationStep)>,
 }
 
@@ -108,36 +109,36 @@ impl Simulation {
     // TODO: Should extract be performed explicitly? e.g. Simulation::extract, Simulation::compute
     fn new(builder: SimulationBuilder, world: &World) -> Self {
         let entities = builder.extractor.extract_entities(world);
-        let events = builder.extractor.create_extract_event(world);
-        let init_step = SimulationStep { events };
+        let init_step = SimulationStep {
+            events: builder.extractor.create_extract_events(world),
+        };
+        let compute_init_step = init_step.clone();
         let (step_sender, step_receiver) = unbounded();
         let compute_plugin = SimulationComputePlugin {
             startup_schedule_builder: builder.startup_schedule_builder,
             compute_schedule_builder: builder.compute_schedule_builder,
-            entities,
-            init_step: init_step.clone(),
             step_sender,
         };
 
         thread::spawn(move || {
-            compute_simulation(compute_plugin, builder.plugins);
+            compute_simulation(compute_plugin, entities, compute_init_step, builder.plugins);
         });
 
         Self {
             step_receiver,
-            init_step,
-            simulation_steps: BTreeMap::new(),
+            init_step: SyncCell::new(init_step),
+            simulation_steps: SyncCell::new(BTreeMap::new()),
         }
     }
 
     /// The initial step of the simulation, which can be used to reset to the simulation's initial state.
-    pub fn init_step(&self) -> &SimulationStep {
-        &self.init_step
+    pub fn init_step(&mut self) -> &SimulationStep {
+        self.init_step.get()
     }
 
     /// The computed simulation steps, ordered by simulation time.
-    pub fn steps(&self) -> &BTreeMap<SimulationTime, SimulationStep> {
-        &self.simulation_steps
+    pub fn steps(&mut self) -> &BTreeMap<SimulationTime, SimulationStep> {
+        self.simulation_steps.get()
     }
 
     // TODO: Time bound this system in order to avoid delaying the main app.
@@ -146,7 +147,7 @@ impl Simulation {
         for mut simulation in &mut simulations {
             let simulation = &mut *simulation;
             for (time, step) in simulation.step_receiver.try_iter() {
-                simulation.simulation_steps.insert(time, step);
+                simulation.simulation_steps.get().insert(time, step);
             }
         }
     }

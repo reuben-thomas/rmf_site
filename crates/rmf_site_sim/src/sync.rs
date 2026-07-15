@@ -3,7 +3,9 @@ use crate::event::DiscreteEvent;
 use crate::simulation::SimulationStep;
 use crate::time::SimulationTime;
 use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
+use bevy::ecs::system::Command;
 use bevy::prelude::*;
+use bevy::utils::synccell::SyncCell;
 use crossbeam_channel::Sender;
 
 /// Extracts entities, components, and resources from the main world into the simulation world.
@@ -37,7 +39,7 @@ impl Extractor {
 
     // TODO: This is now also used for the init / reset step.
     /// Creates the events that capture the extracted component and resource states.
-    pub fn create_extract_event(&self, world: &World) -> Vec<Box<dyn DiscreteEvent>> {
+    pub fn create_extract_events(&self, world: &World) -> Vec<Box<dyn DiscreteEvent>> {
         let mut events = self.extract_components(world);
         events.extend(self.extract_resources(world));
         events
@@ -110,31 +112,25 @@ impl ResourceExtractor {
     }
 }
 
+#[derive(Clone)]
 pub struct ExtractComponents<T: Component>(pub EntityHashMap<T>);
 
-impl<T: Component + Clone> DiscreteEvent for ExtractComponents<T> {
-    fn apply(self: Box<Self>, world: &mut World) {
+impl<T: Component + Clone> Command for ExtractComponents<T> {
+    fn apply(self, world: &mut World) {
         for (entity, value) in self.0 {
             if let Ok(mut e) = world.get_entity_mut(entity) {
                 e.insert(value);
             }
         }
     }
-
-    fn clone_to_box(&self) -> Box<dyn DiscreteEvent> {
-        Box::new(ExtractComponents(self.0.clone()))
-    }
 }
 
+#[derive(Clone)]
 pub struct ExtractResource<T: Resource>(pub T);
 
-impl<T: Resource + Clone> DiscreteEvent for ExtractResource<T> {
-    fn apply(self: Box<Self>, world: &mut World) {
+impl<T: Resource + Clone> Command for ExtractResource<T> {
+    fn apply(self, world: &mut World) {
         world.insert_resource(self.0);
-    }
-
-    fn clone_to_box(&self) -> Box<dyn DiscreteEvent> {
-        Box::new(ExtractResource(self.0.clone()))
     }
 }
 
@@ -154,16 +150,22 @@ impl StepSender {
 
 /// A buffer to store the [`DiscreteEvent`]s executed in the current step,
 /// sent to the main world as a single [`SimulationStep`].
-#[derive(Resource, Default)]
-pub struct SimulationEventBuffer(Vec<Box<dyn DiscreteEvent>>);
+#[derive(Resource)]
+pub struct SimulationEventBuffer(SyncCell<Vec<Box<dyn DiscreteEvent>>>);
+
+impl Default for SimulationEventBuffer {
+    fn default() -> Self {
+        Self(SyncCell::new(Vec::new()))
+    }
+}
 
 impl SimulationEventBuffer {
     pub(crate) fn extend(&mut self, events: impl IntoIterator<Item = Box<dyn DiscreteEvent>>) {
-        self.0.extend(events);
+        self.0.get().extend(events);
     }
 
     fn take(&mut self) -> Vec<Box<dyn DiscreteEvent>> {
-        std::mem::take(&mut self.0)
+        std::mem::take(self.0.get())
     }
 
     pub(crate) fn send_step(
