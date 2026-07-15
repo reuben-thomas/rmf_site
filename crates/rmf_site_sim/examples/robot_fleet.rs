@@ -26,7 +26,7 @@ const NUM_ROBOTS_WAYPOINTS: usize = 10;
 /// The duration to stagger the arrival of consecutive requests in seconds.
 const REQUEST_ARRIVAL_STAGGER_SECONDS: u64 = 2;
 /// The half size of the square simulation area in meters.
-const SIMULATION_AREA_HALF_SIZE: f32 = 500.0;
+const SIMULATION_AREA_HALF_SIZE: f32 = 250.0;
 /// Number of steps to interpolate within a trajectory.
 const TRAJECTORY_INTERPOLATION_STEPS: usize = 10;
 

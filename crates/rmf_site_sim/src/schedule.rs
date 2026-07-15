@@ -17,9 +17,9 @@ pub struct SimulationComputeStep;
 /// System sets that order execution within a [`SimulationComputeStep`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SystemSet)]
 pub enum SimulationComputeSet {
-    ExecuteEvents,
+    /// Execute the selected event
+    ExecuteEvent,
     ExecuteSystems,
-    // TODO: Systems will not be able to read instant events from others.
     ExecuteInstantEvents,
     SendSimulationStep,
     IncrementComputeClock,

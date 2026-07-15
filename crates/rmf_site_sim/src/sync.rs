@@ -1,6 +1,6 @@
 use crate::compute::SimulationComputeClock;
 use crate::event::DiscreteEvent;
-use crate::simulation::SimulationStep;
+use crate::simulation::{SimulationComputeUpdate, SimulationStep};
 use crate::time::SimulationTime;
 use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
 use bevy::ecs::system::Command;
@@ -37,28 +37,31 @@ impl Extractor {
         entities.into_iter().collect()
     }
 
-    // TODO: This is now also used for the init / reset step.
     /// Creates the events that capture the extracted component and resource states.
     pub fn create_extract_events(&self, world: &World) -> Vec<Box<dyn DiscreteEvent>> {
-        let mut events = self.extract_components(world);
-        events.extend(self.extract_resources(world));
-        events
+        self.extract_components(world)
+            .chain(self.extract_resources(world))
+            .collect()
     }
 
     /// Extracts all components that should be synchronized.
-    fn extract_components(&self, world: &World) -> Vec<Box<dyn DiscreteEvent>> {
+    fn extract_components<'a>(
+        &'a self,
+        world: &'a World,
+    ) -> impl Iterator<Item = Box<dyn DiscreteEvent>> + 'a {
         self.component_extractors
             .iter()
-            .map(|extractor| (extractor.extract_components)(world))
-            .collect()
+            .map(move |extractor| (extractor.extract_components)(world))
     }
 
     /// Extracts all resources that should be synchronized.
-    fn extract_resources(&self, world: &World) -> Vec<Box<dyn DiscreteEvent>> {
+    fn extract_resources<'a>(
+        &'a self,
+        world: &'a World,
+    ) -> impl Iterator<Item = Box<dyn DiscreteEvent>> + 'a {
         self.resource_extractors
             .iter()
-            .filter_map(|extractor| (extractor.extract_resource)(world))
-            .collect()
+            .filter_map(move |extractor| (extractor.extract_resource)(world))
     }
 }
 
@@ -135,16 +138,15 @@ impl<T: Resource + Clone> Command for ExtractResource<T> {
 }
 
 #[derive(Resource)]
-pub struct StepSender(Sender<(SimulationTime, SimulationStep)>);
+pub struct StateUpdateSender(Sender<SimulationComputeUpdate>);
 
-impl StepSender {
-    pub fn new(sender: Sender<(SimulationTime, SimulationStep)>) -> Self {
+impl StateUpdateSender {
+    pub fn new(sender: Sender<SimulationComputeUpdate>) -> Self {
         Self(sender)
     }
 
     fn send(&self, time: SimulationTime, step: SimulationStep) {
-        // TODO: Error handling
-        let _ = self.0.send((time, step));
+        let _ = self.0.send(SimulationComputeUpdate::Step(time, step));
     }
 }
 
@@ -171,7 +173,7 @@ impl SimulationEventBuffer {
     pub(crate) fn send_step(
         clock: Res<SimulationComputeClock>,
         mut buffer: ResMut<Self>,
-        sender: Res<StepSender>,
+        sender: Res<StateUpdateSender>,
     ) {
         let events = buffer.take();
         if events.is_empty() {
