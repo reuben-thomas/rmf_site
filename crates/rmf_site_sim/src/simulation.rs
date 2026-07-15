@@ -1,4 +1,4 @@
-use crate::compute::{SimulationComputePlugin, compute_simulation};
+use crate::compute::{SimulationComputePlugin, compute_async};
 use crate::event::DiscreteEvent;
 use crate::schedule::{
     ScheduleBuilder, SimulationComputeSet, SimulationComputeStep, SimulationScheduleConfigs,
@@ -12,14 +12,13 @@ use bevy::utils::synccell::SyncCell;
 use crossbeam_channel::{Receiver, unbounded};
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::thread;
 
 /// Plugin for computing discrete event simulations.
 pub struct SimulationPlugin;
 
 impl Plugin for SimulationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, Simulation::update_steps);
+        app.add_systems(Update, Simulation::process_updates);
     }
 }
 
@@ -97,12 +96,16 @@ impl SimulationBuilder {
     }
 }
 
+/// Adds one or more plugins to the target world's [`App`].
+pub type PluginFactory = Arc<dyn Fn(&mut App) + Send + Sync>;
+
 /// A unique discrete event simulation.
 #[derive(Component)]
 pub struct Simulation {
     init_step: SyncCell<SimulationStep>,
     simulation_steps: SyncCell<BTreeMap<SimulationTime, SimulationStep>>,
-    step_receiver: Receiver<(SimulationTime, SimulationStep)>,
+    state: SimulationState,
+    update_receiver: Receiver<SimulationComputeUpdate>,
 }
 
 impl Simulation {
@@ -112,23 +115,24 @@ impl Simulation {
         let init_step = SimulationStep {
             events: builder.extractor.create_extract_events(world),
         };
-        let compute_init_step = init_step.clone();
-        let (step_sender, step_receiver) = unbounded();
+        let (update_sender, update_receiver) = unbounded();
         let compute_plugin = SimulationComputePlugin {
             startup_schedule_builder: builder.startup_schedule_builder,
             compute_schedule_builder: builder.compute_schedule_builder,
-            step_sender,
+            update_sender,
         };
-
-        thread::spawn(move || {
-            compute_simulation(compute_plugin, entities, compute_init_step, builder.plugins);
-        });
+        compute_async(compute_plugin, entities, init_step.clone(), builder.plugins);
 
         Self {
-            step_receiver,
             init_step: SyncCell::new(init_step),
             simulation_steps: SyncCell::new(BTreeMap::new()),
+            state: SimulationState::Computing,
+            update_receiver,
         }
+    }
+
+    pub fn state(&self) -> SimulationState {
+        self.state
     }
 
     /// The initial step of the simulation, which can be used to reset to the simulation's initial state.
@@ -142,15 +146,30 @@ impl Simulation {
     }
 
     // TODO: Time bound this system in order to avoid delaying the main app.
-    /// Updates the simulation steps from the step receiver.
-    fn update_steps(mut simulations: Query<&mut Simulation>) {
+    /// Applies [`StateUpdate`]s received from the compute task.
+    fn process_updates(mut simulations: Query<&mut Simulation>) {
         for mut simulation in &mut simulations {
             let simulation = &mut *simulation;
-            for (time, step) in simulation.step_receiver.try_iter() {
-                simulation.simulation_steps.get().insert(time, step);
+            for update in simulation.update_receiver.try_iter() {
+                match update {
+                    SimulationComputeUpdate::Step(time, step) => {
+                        simulation.simulation_steps.get().insert(time, step);
+                    }
+                    SimulationComputeUpdate::State(state) => {
+                        simulation.state = state;
+                    }
+                }
             }
         }
     }
+}
+
+/// The current state of a simulation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimulationState {
+    Computing,
+    Complete,
+    Failed,
 }
 
 /// A single computed simulation step.
@@ -159,5 +178,7 @@ pub struct SimulationStep {
     pub events: Vec<Box<dyn DiscreteEvent>>,
 }
 
-/// Adds one or more plugins to the target world's [`App`].
-pub type PluginFactory = Arc<dyn Fn(&mut App) + Send + Sync>;
+pub enum SimulationComputeUpdate {
+    Step(SimulationTime, SimulationStep),
+    State(SimulationState),
+}

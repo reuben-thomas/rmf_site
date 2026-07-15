@@ -2,18 +2,40 @@ use crate::event::{DiscreteEvents, execute_events};
 use crate::schedule::{
     ScheduleBuilder, SimulationComputeSet, SimulationComputeStep, SimulationStartup,
 };
-use crate::simulation::{PluginFactory, SimulationStep};
-use crate::sync::{SimulationEventBuffer, StepSender};
+use crate::simulation::{PluginFactory, SimulationComputeUpdate, SimulationState, SimulationStep};
+use crate::sync::{SimulationEventBuffer, StateUpdateSender};
 use crate::time::SimulationTime;
 use bevy::prelude::*;
+use bevy::tasks::{AsyncComputeTaskPool, TaskPool};
 use crossbeam_channel::Sender;
 use std::collections::BTreeSet;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
-// TODO: Error handling, this is being executed in a separate thread.
-/// Computes [`SimulationStep`]s for a simulation.
-pub fn compute_simulation(
+/// Computes [`SimulationStep`]s for a simulation in a [`AsyncComputeTaskPool`].
+pub fn compute_async(
     compute_plugin: SimulationComputePlugin,
-    entities: Vec<Entity>,
+    init_entities: Vec<Entity>,
+    init_step: SimulationStep,
+    plugins: Vec<PluginFactory>,
+) {
+    let update_sender = compute_plugin.update_sender.clone();
+    AsyncComputeTaskPool::get_or_init(TaskPool::new)
+        .spawn(async move {
+            let result = catch_unwind(AssertUnwindSafe(move || {
+                compute(compute_plugin, init_entities, init_step, plugins);
+            }));
+            let state = match result {
+                Ok(()) => SimulationState::Complete,
+                Err(_) => SimulationState::Failed,
+            };
+            let _ = update_sender.send(SimulationComputeUpdate::State(state));
+        })
+        .detach();
+}
+
+fn compute(
+    compute_plugin: SimulationComputePlugin,
+    init_entities: Vec<Entity>,
     init_step: SimulationStep,
     plugins: Vec<PluginFactory>,
 ) {
@@ -21,13 +43,12 @@ pub fn compute_simulation(
     app.add_plugins(compute_plugin);
 
     let world = app.world_mut();
-    for entity in &entities {
+    for entity in &init_entities {
         spawn_at(world, *entity);
     }
     for event in init_step.events {
         event.apply(world);
     }
-
     for plugin in &plugins {
         plugin(&mut app);
     }
@@ -38,7 +59,7 @@ pub fn compute_simulation(
 pub struct SimulationComputePlugin {
     pub startup_schedule_builder: ScheduleBuilder,
     pub compute_schedule_builder: ScheduleBuilder,
-    pub step_sender: Sender<(SimulationTime, SimulationStep)>,
+    pub update_sender: Sender<SimulationComputeUpdate>,
 }
 
 impl Plugin for SimulationComputePlugin {
@@ -46,14 +67,14 @@ impl Plugin for SimulationComputePlugin {
         app.init_resource::<SimulationComputeClock>()
             .init_resource::<DiscreteEvents>()
             .init_resource::<SimulationEventBuffer>()
-            .insert_resource(StepSender::new(self.step_sender.clone()));
+            .insert_resource(StateUpdateSender::new(self.update_sender.clone()));
 
         let startup_schedule = self.startup_schedule_builder.build();
         let mut system_schedule = self.compute_schedule_builder.build();
         // TODO: Should the following configuration logic be within the builder?
         system_schedule.configure_sets(
             (
-                SimulationComputeSet::ExecuteEvents,
+                SimulationComputeSet::ExecuteEvent,
                 SimulationComputeSet::ExecuteSystems,
                 SimulationComputeSet::ExecuteInstantEvents,
                 SimulationComputeSet::SendSimulationStep,
@@ -62,7 +83,7 @@ impl Plugin for SimulationComputePlugin {
                 .chain(),
         );
         system_schedule.add_systems((
-            execute_events.in_set(SimulationComputeSet::ExecuteEvents),
+            execute_events.in_set(SimulationComputeSet::ExecuteEvent),
             execute_events.in_set(SimulationComputeSet::ExecuteInstantEvents),
             SimulationEventBuffer::send_step.in_set(SimulationComputeSet::SendSimulationStep),
             (
