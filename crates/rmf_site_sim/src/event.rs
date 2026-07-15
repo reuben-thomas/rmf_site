@@ -1,17 +1,28 @@
 use crate::compute::SimulationComputeClock;
 use crate::sync::SimulationEventBuffer;
 use crate::time::SimulationTime;
-use bevy::ecs::system::{Deferred, SystemBuffer, SystemMeta, SystemParam};
+use bevy::ecs::system::{Command, Deferred, SystemBuffer, SystemMeta, SystemParam};
 use bevy::prelude::*;
+use bevy::utils::synccell::SyncCell;
 use std::cmp::Ordering;
 
 /// A unique change applied on the world at a discrete simulation time.
-pub trait DiscreteEvent: Send + Sync + 'static {
+pub trait DiscreteEvent: Send + 'static {
     /// Applies the event to the world.
     fn apply(self: Box<Self>, world: &mut World);
 
     /// Clones into a boxed object.
     fn clone_to_box(&self) -> Box<dyn DiscreteEvent>;
+}
+
+impl<T: Command + Clone> DiscreteEvent for T {
+    fn apply(self: Box<Self>, world: &mut World) {
+        Command::apply(*self, world)
+    }
+
+    fn clone_to_box(&self) -> Box<dyn DiscreteEvent> {
+        Box::new(self.clone())
+    }
 }
 
 impl Clone for Box<dyn DiscreteEvent> {
@@ -20,24 +31,21 @@ impl Clone for Box<dyn DiscreteEvent> {
     }
 }
 
-impl<F> DiscreteEvent for F
-where
-    F: FnOnce(&mut World) + Clone + Send + Sync + 'static,
-{
-    fn apply(self: Box<Self>, world: &mut World) {
-        (*self)(world)
-    }
-
-    fn clone_to_box(&self) -> Box<dyn DiscreteEvent> {
-        Box::new(self.clone())
-    }
+/// A resource holding discrete events to be executed at specific simulation times.
+#[derive(Resource)]
+pub struct DiscreteEvents {
+    instant: SyncCell<Vec<Box<dyn DiscreteEvent>>>,
+    #[expect(clippy::type_complexity)]
+    scheduled: Option<(SimulationTime, SyncCell<Vec<Box<dyn DiscreteEvent>>>)>,
 }
 
-/// A resource holding discrete events to be executed at specific simulation times.
-#[derive(Resource, Default)]
-pub struct DiscreteEvents {
-    instant: Vec<Box<dyn DiscreteEvent>>,
-    scheduled: Option<(SimulationTime, Vec<Box<dyn DiscreteEvent>>)>,
+impl Default for DiscreteEvents {
+    fn default() -> Self {
+        Self {
+            instant: SyncCell::new(Vec::new()),
+            scheduled: None,
+        }
+    }
 }
 
 impl DiscreteEvents {
@@ -49,18 +57,18 @@ impl DiscreteEvents {
     ) {
         match event_time.cmp(&now) {
             Ordering::Less => {}
-            Ordering::Equal => self.instant.push(event),
+            Ordering::Equal => self.instant.get().push(event),
             Ordering::Greater => match &mut self.scheduled {
                 Some((nearest, events)) => match event_time.cmp(nearest) {
                     Ordering::Less => {
                         *nearest = event_time;
-                        *events = vec![event];
+                        *events = SyncCell::new(vec![event]);
                     }
-                    Ordering::Equal => events.push(event),
+                    Ordering::Equal => events.get().push(event),
                     Ordering::Greater => {}
                 },
                 None => {
-                    self.scheduled = Some((event_time, vec![event]));
+                    self.scheduled = Some((event_time, SyncCell::new(vec![event])));
                 }
             },
         }
@@ -73,11 +81,11 @@ impl DiscreteEvents {
 
     /// Removes and returns the events scheduled at the specified time.
     fn take_events_at(&mut self, time: SimulationTime) -> Vec<Box<dyn DiscreteEvent>> {
-        let mut events = std::mem::take(&mut self.instant);
+        let mut events = std::mem::take(self.instant.get());
         if let Some((scheduled_time, _)) = &self.scheduled
             && *scheduled_time == time {
                 let (_, scheduled) = self.scheduled.take().unwrap();
-                events.extend(scheduled);
+                events.extend(SyncCell::to_inner(scheduled));
             }
         events
     }

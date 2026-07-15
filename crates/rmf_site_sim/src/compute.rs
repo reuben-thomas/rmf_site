@@ -11,9 +11,23 @@ use std::collections::BTreeSet;
 
 // TODO: Error handling, this is being executed in a separate thread.
 /// Computes [`SimulationStep`]s for a simulation.
-pub fn compute_simulation(compute_plugin: SimulationComputePlugin, plugins: Vec<PluginFactory>) {
+pub fn compute_simulation(
+    compute_plugin: SimulationComputePlugin,
+    entities: Vec<Entity>,
+    init_step: SimulationStep,
+    plugins: Vec<PluginFactory>,
+) {
     let mut app = App::new();
     app.add_plugins(compute_plugin);
+
+    let world = app.world_mut();
+    for entity in &entities {
+        spawn_at(world, *entity);
+    }
+    for event in init_step.events {
+        event.apply(world);
+    }
+
     for plugin in &plugins {
         plugin(&mut app);
     }
@@ -24,8 +38,6 @@ pub fn compute_simulation(compute_plugin: SimulationComputePlugin, plugins: Vec<
 pub struct SimulationComputePlugin {
     pub startup_schedule_builder: ScheduleBuilder,
     pub compute_schedule_builder: ScheduleBuilder,
-    pub entities: Vec<Entity>,
-    pub init_step: SimulationStep,
     pub step_sender: Sender<(SimulationTime, SimulationStep)>,
 }
 
@@ -35,14 +47,6 @@ impl Plugin for SimulationComputePlugin {
             .init_resource::<DiscreteEvents>()
             .init_resource::<SimulationEventBuffer>()
             .insert_resource(StepSender::new(self.step_sender.clone()));
-
-        let world = app.world_mut();
-        for entity in &self.entities {
-            spawn_at(world, *entity);
-        }
-        for event in self.init_step.events.clone() {
-            event.apply(world);
-        }
 
         let startup_schedule = self.startup_schedule_builder.build();
         let mut system_schedule = self.compute_schedule_builder.build();
