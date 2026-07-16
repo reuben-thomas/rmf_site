@@ -70,15 +70,16 @@ impl ScheduleBuilder {
     /// Builds a new [`Schedule`] containing the added systems, ordered by the configured policy.
     pub fn build(self) -> Schedule {
         let mut schedule = Schedule::new(self.label);
-        schedule.set_build_settings(ScheduleBuildSettings {
-            ambiguity_detection: LogLevel::Error,
-            ..Default::default()
-        });
         if let Some(configs) = self.configs {
             schedule.add_systems(configs);
         }
+
         match self.ordering {
             SystemExecutionOrdering::Total => {
+                schedule.set_build_settings(ScheduleBuildSettings {
+                    ambiguity_detection: LogLevel::Error,
+                    ..Default::default()
+                });
                 schedule.add_build_pass(TotalOrderingBuildPass {
                     added_system_type_ids: schedule
                         .graph()
@@ -114,6 +115,7 @@ impl ScheduleBuildPass for TotalOrderingBuildPass {
         std::iter::empty()
     }
 
+    // TODO: Toposort for each ScheduleGraph::conflicting_systems set
     fn build(
         &mut self,
         _world: &mut World,
@@ -153,7 +155,6 @@ impl ScheduleBuildPass for TotalOrderingBuildPass {
             }
         }
 
-        // TODO: This will add redundant edges.
         for pair in topological_order.windows(2) {
             dependency_flattened.add_edge(pair[0], pair[1]);
         }
@@ -180,9 +181,9 @@ impl TotalOrderingBuildPass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::{DiscreteChangeWriter, DiscreteResourceWriter};
+    use crate::event::DiscreteChangeWriter;
     use bevy::ecs::resource::Resource;
-    use bevy::ecs::system::{IntoSystem, Res, System};
+    use bevy::ecs::system::{IntoSystem, ResMut, System};
 
     #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
     struct TestSchedule;
@@ -190,11 +191,11 @@ mod tests {
     #[derive(Resource, Default, Clone)]
     struct X<const N: usize>;
 
-    fn a(_x1: Res<X<1>>, _writer: DiscreteChangeWriter) {}
+    fn a(_x1: ResMut<X<1>>, _writer: DiscreteChangeWriter) {}
 
-    fn b(_x1: Res<X<1>>, _writer: DiscreteChangeWriter) {}
+    fn b(_x2: ResMut<X<2>>, _writer: DiscreteChangeWriter) {}
 
-    fn c(_x1: Res<X<1>>, _x2: Res<X<2>>, _writer: DiscreteResourceWriter<X<3>>) {}
+    fn c(_x1: ResMut<X<1>>, _x2: ResMut<X<2>>, _writer: DiscreteChangeWriter) {}
 
     fn get_system_name<M>(system: impl IntoSystem<(), (), M>) -> String {
         IntoSystem::into_system(system).name().to_string()
@@ -203,9 +204,6 @@ mod tests {
     #[test]
     fn test_total_ordering() {
         let mut world = World::new();
-        world.init_resource::<X<1>>();
-        world.init_resource::<X<2>>();
-
         let mut schedule = ScheduleBuilder::new(TestSchedule)
             .add_systems((a, b.before(a), c.after(b)))
             .set_ordering(SystemExecutionOrdering::Total)
@@ -220,5 +218,17 @@ mod tests {
             .filter(|name| expected.contains(name))
             .collect();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_total_ordering_ambiguity_fail() {
+        let mut world = World::new();
+        let mut schedule = ScheduleBuilder::new(TestSchedule)
+            .add_systems(a)
+            .set_ordering(SystemExecutionOrdering::Total)
+            .build();
+        schedule.add_systems(c);
+        let result = schedule.initialize(&mut world);
+        assert!(matches!(result, Err(ScheduleBuildError::Ambiguity(_))));
     }
 }
