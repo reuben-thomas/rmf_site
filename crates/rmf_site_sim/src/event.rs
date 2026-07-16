@@ -16,7 +16,10 @@ pub trait DiscreteEvent: Send + 'static {
     fn clone_to_box(&self) -> Box<dyn DiscreteEvent>;
 }
 
-impl<T: Command + Clone> DiscreteEvent for T {
+impl<T> DiscreteEvent for T
+where
+    T: Command + Clone,
+{
     fn apply(self: Box<Self>, world: &mut World) {
         Command::apply(*self, world)
     }
@@ -36,7 +39,6 @@ impl Clone for Box<dyn DiscreteEvent> {
 #[derive(Resource)]
 pub struct DiscreteEvents {
     instant: SyncCell<Vec<Box<dyn DiscreteEvent>>>,
-    #[expect(clippy::type_complexity)]
     scheduled: Option<(SimulationTime, SyncCell<Vec<Box<dyn DiscreteEvent>>>)>,
 }
 

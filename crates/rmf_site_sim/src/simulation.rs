@@ -177,6 +177,14 @@ pub struct SimulationStep {
     pub events: Vec<Box<dyn DiscreteEvent>>,
 }
 
+impl SimulationStep {
+    pub fn apply(self, world: &mut World) {
+        for event in self.events {
+            event.apply(world);
+        }
+    }
+}
+
 pub enum SimulationComputeUpdate {
     Step(SimulationTime, SimulationStep),
     State(SimulationState),

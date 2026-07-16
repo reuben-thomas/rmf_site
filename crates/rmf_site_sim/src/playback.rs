@@ -49,17 +49,15 @@ fn play(world: &mut World) {
             return;
         }
 
-        let step_events: Vec<_> = steps
+        let pending_steps: Vec<_> = steps
             .iter()
             .skip(play.step_idx)
             .take_while(|(time, _)| time.elapsed() <= play.elapsed)
-            .map(|(_, step)| step.events.clone())
+            .map(|(_, step)| step.clone())
             .collect();
-        play.step_idx += step_events.len();
-        for events in step_events {
-            for event in events {
-                event.apply(world);
-            }
+        play.step_idx += pending_steps.len();
+        for step in pending_steps {
+            step.apply(world);
         }
     });
 }
@@ -89,8 +87,6 @@ fn reset(world: &mut World) {
     world.remove_resource::<Pause>();
     let mut query = world.query::<&mut Simulation>();
     let mut simulation = query.single_mut(world).unwrap();
-    let events = simulation.init_step().events.clone();
-    for event in events {
-        event.apply(world);
-    }
+    let init_step = simulation.init_step().clone();
+    init_step.apply(world);
 }

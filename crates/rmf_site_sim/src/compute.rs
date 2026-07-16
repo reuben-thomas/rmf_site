@@ -27,9 +27,7 @@ pub fn compute_async(
                 for entity in &init_entities {
                     spawn_at(world, *entity);
                 }
-                for event in init_step.events {
-                    event.apply(world);
-                }
+                init_step.apply(world);
                 for plugin in plugins {
                     plugin(&mut app);
                 }
