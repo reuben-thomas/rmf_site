@@ -8,6 +8,8 @@ use bevy::prelude::*;
 use bevy::utils::synccell::SyncCell;
 use crossbeam_channel::Sender;
 
+// TODO: Provide ability to clone only entities & components with a marker struct,like
+// bevy::render::sync_world
 /// Extracts entities, components, and resources from the main world into the simulation world.
 #[derive(Default, Clone)]
 pub struct Extractor {

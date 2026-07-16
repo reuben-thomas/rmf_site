@@ -16,7 +16,10 @@ use bevy::prelude::*;
 use rand::Rng;
 use rmf_site_sim::compute::SimulationComputeClock;
 use rmf_site_sim::event::{DiscreteChangeWriter, DiscreteComponentWriter};
-use rmf_site_sim::playback::SimulationPlaybackPlugin;
+use rmf_site_sim::playback::{
+    LoopBehavior, SetActiveSimulation, SimulationPlayback, SimulationPlaybackCommand,
+    SimulationPlaybackConfig, SimulationPlaybackPlugin,
+};
 use rmf_site_sim::time::SimulationTime;
 use rmf_site_sim::{SimulationBuilder, SimulationPlugin};
 use std::time::Duration;
@@ -28,7 +31,13 @@ const REQUEST_ARRIVAL_STAGGER_SECONDS: u64 = 2;
 /// The half size of the square simulation area in meters.
 const SIMULATION_AREA_HALF_SIZE: f32 = 250.0;
 /// Number of steps to interpolate within a trajectory.
-const TRAJECTORY_INTERPOLATION_STEPS: usize = 10;
+const TRAJECTORY_INTERPOLATION_STEPS: usize = 100;
+/// The speed multiplier for simulation playback.
+const PLAYBACK_SPEED: f32 = 5.0;
+/// The duration to pause before replaying the simulation.
+const PAUSE_BEFORE_REPLAY: Duration = Duration::from_secs(1);
+/// The duration to jump when scrubbing with the arrow keys.
+const SCRUB_STEP: Duration = Duration::from_secs(5);
 
 /// A pending request for a robot.
 #[derive(Component, Clone)]
@@ -79,7 +88,10 @@ fn main() {
         .add_plugins((DefaultPlugins, SimulationPlugin, SimulationPlaybackPlugin))
         .add_systems(Startup, setup)
         // Visualization systems to show states during playback.
-        .add_systems(Update, (draw_robots, draw_waypoints, draw_trajectory))
+        .add_systems(
+            Update,
+            (draw_robots, draw_waypoints, draw_trajectory, playback_controls),
+        )
         .run();
 }
 
@@ -95,6 +107,10 @@ fn setup(world: &mut World) {
 
     spawn_robots_waypoints(world, NUM_ROBOTS_WAYPOINTS, position_bounds);
     world.insert_resource(ActiveRequestEntities::default());
+    world.insert_resource(SimulationPlaybackConfig {
+        speed: PLAYBACK_SPEED,
+        looping: LoopBehavior::Pause(PAUSE_BEFORE_REPLAY),
+    });
 
     let simulation = SimulationBuilder::new()
         // Components and resources extracted into the simulation world.
@@ -107,7 +123,33 @@ fn setup(world: &mut World) {
         .add_simulation_model_systems((request_generator, planner, robot))
         .build(world);
 
-    world.spawn(simulation);
+    let simulation_entity = world.spawn(simulation).id();
+    world.send_event(SetActiveSimulation(simulation_entity));
+}
+
+/// Controls playback with the keyboard: space toggles play/pause, arrow keys scrub.
+fn playback_controls(
+    keys: Res<ButtonInput<KeyCode>>,
+    playback: Res<SimulationPlayback>,
+    mut commands: EventWriter<SimulationPlaybackCommand>,
+) {
+    if keys.just_pressed(KeyCode::Space) {
+        if playback.is_playing() {
+            commands.write(SimulationPlaybackCommand::Pause);
+        } else {
+            commands.write(SimulationPlaybackCommand::Play);
+        }
+    }
+    if keys.just_pressed(KeyCode::ArrowLeft) {
+        commands.write(SimulationPlaybackCommand::ScrubTo(SimulationTime::new(
+            playback.elapsed().saturating_sub(SCRUB_STEP),
+        )));
+    }
+    if keys.just_pressed(KeyCode::ArrowRight) {
+        commands.write(SimulationPlaybackCommand::ScrubTo(SimulationTime::new(
+            playback.elapsed() + SCRUB_STEP,
+        )));
+    }
 }
 
 /// Spawns a specified number of robots and waypoints of random pose within bounds.
@@ -284,9 +326,9 @@ fn draw_trajectory(trajectories: Query<&Trajectory, With<Robot>>, mut gizmos: Gi
                 .map(|point| point.pose.translation.truncate()),
             Color::from(basic::BLUE).with_alpha(0.2),
         );
-        for point in &trajectory.points {
-            draw_direction_arrow(&mut gizmos, &point.pose, 10.0, Color::from(basic::BLUE));
-        }
+        // for point in &trajectory.points {
+        //     draw_direction_arrow(&mut gizmos, &point.pose, 10.0, Color::from(basic::BLUE));
+        // }
     }
 }
 

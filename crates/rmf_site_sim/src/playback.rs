@@ -1,92 +1,219 @@
-use crate::simulation::Simulation;
+use crate::simulation::{Simulation, SimulationState, SimulationStep};
+use crate::time::SimulationTime;
 use bevy::prelude::*;
 use std::time::Duration;
-
-const PLAYBACK_SPEED: f32 = 5.0;
-const PAUSE_BEFORE_REPLAY_SECONDS: f32 = 1.0;
 
 pub struct SimulationPlaybackPlugin;
 
 impl Plugin for SimulationPlaybackPlugin {
     fn build(&self, app: &mut App) {
-        app.init_state::<PlaybackState>()
-            .init_resource::<Play>()
-            .add_systems(Update, play.run_if(in_state(PlaybackState::Playing)))
-            .add_systems(Update, pause.run_if(in_state(PlaybackState::Paused)))
-            .add_systems(OnEnter(PlaybackState::Paused), start_pause)
-            .add_systems(OnExit(PlaybackState::Paused), reset);
+        app.init_resource::<SimulationPlaybackConfig>()
+            .init_resource::<SimulationPlayback>()
+            .add_event::<SetActiveSimulation>()
+            .add_event::<SimulationPlaybackCommand>()
+            .add_systems(
+                Update,
+                (activate_simulation, apply_playback_commands, advance_playback).chain(),
+            );
     }
 }
 
-#[derive(States, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-enum PlaybackState {
-    #[default]
-    Playing,
-    Paused,
+#[derive(Resource)]
+pub struct SimulationPlaybackConfig {
+    pub speed: f32,
+    pub looping: LoopBehavior,
 }
 
+impl Default for SimulationPlaybackConfig {
+    fn default() -> Self {
+        Self {
+            speed: 1.0,
+            looping: LoopBehavior::None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum LoopBehavior {
+    None,
+    Pause(Duration),
+}
+
+#[derive(Event)]
+pub struct SetActiveSimulation(pub Entity);
+
+#[derive(Event)]
+pub enum SimulationPlaybackCommand {
+    Play,
+    Pause,
+    ScrubTo(SimulationTime),
+}
+
+#[derive(Resource)]
+pub struct ActiveSimulation(pub Entity);
+
 #[derive(Resource, Default)]
-struct Play {
+pub struct SimulationPlayback {
+    mode: PlaybackMode,
     elapsed: Duration,
     step_idx: usize,
 }
 
-fn play(world: &mut World) {
-    world.resource_scope(|world, mut play: Mut<Play>| {
-        play.elapsed += world.resource::<Time>().delta().mul_f32(PLAYBACK_SPEED);
+impl SimulationPlayback {
+    pub fn is_playing(&self) -> bool {
+        matches!(self.mode, PlaybackMode::Playing)
+    }
 
-        // TODO: Handle multiple simulations
-        let mut query = world.query::<&mut Simulation>();
-        let mut simulation = query.single_mut(world).unwrap();
-        let steps = simulation.steps();
+    pub fn elapsed(&self) -> Duration {
+        self.elapsed
+    }
+}
 
-        if play.step_idx >= steps.len() {
-            play.step_idx = 0;
-            play.elapsed = Duration::ZERO;
-            world
-                .resource_mut::<NextState<PlaybackState>>()
-                .set(PlaybackState::Paused);
-            return;
+#[derive(Default)]
+enum PlaybackMode {
+    #[default]
+    Paused,
+    Playing,
+    LoopPause(Timer),
+}
+
+fn activate_simulation(world: &mut World) {
+    let Some(SetActiveSimulation(entity)) = world
+        .resource_mut::<Events<SetActiveSimulation>>()
+        .drain()
+        .last()
+    else {
+        return;
+    };
+
+    if world.remove_resource::<ActiveSimulation>().is_some() {
+        // TODO: Clean up world state introduced by the previously active simulation.
+    }
+
+    let Some(init_step) = clone_init_step(world, entity) else {
+        return;
+    };
+    init_step.apply(world);
+    world.insert_resource(ActiveSimulation(entity));
+
+    let mut playback = world.resource_mut::<SimulationPlayback>();
+    playback.mode = PlaybackMode::Playing;
+    playback.elapsed = Duration::ZERO;
+    playback.step_idx = 0;
+}
+
+fn apply_playback_commands(world: &mut World) {
+    let commands: Vec<SimulationPlaybackCommand> = world
+        .resource_mut::<Events<SimulationPlaybackCommand>>()
+        .drain()
+        .collect();
+
+    for command in commands {
+        match command {
+            SimulationPlaybackCommand::Play => {
+                world.resource_mut::<SimulationPlayback>().mode = PlaybackMode::Playing;
+            }
+            SimulationPlaybackCommand::Pause => {
+                world.resource_mut::<SimulationPlayback>().mode = PlaybackMode::Paused;
+            }
+            SimulationPlaybackCommand::ScrubTo(time) => {
+                scrub_to(world, time);
+            }
         }
+    }
+}
 
-        let pending_steps: Vec<_> = steps
-            .iter()
-            .skip(play.step_idx)
-            .take_while(|(time, _)| time.elapsed() <= play.elapsed)
+fn scrub_to(world: &mut World, time: SimulationTime) {
+    let Some(&ActiveSimulation(entity)) = world.get_resource::<ActiveSimulation>() else {
+        return;
+    };
+    let Some((init_step, steps)) = world.get_mut::<Simulation>(entity).map(|mut simulation| {
+        let init_step = simulation.init_step().clone();
+        let steps: Vec<SimulationStep> = simulation
+            .steps()
+            .range(..=time)
             .map(|(_, step)| step.clone())
             .collect();
-        play.step_idx += pending_steps.len();
-        for step in pending_steps {
-            step.apply(world);
+        (init_step, steps)
+    }) else {
+        return;
+    };
+
+    let step_idx = steps.len();
+    init_step.apply(world);
+    for step in steps {
+        step.apply(world);
+    }
+
+    let mut playback = world.resource_mut::<SimulationPlayback>();
+    playback.elapsed = time.elapsed();
+    playback.step_idx = step_idx;
+    if matches!(playback.mode, PlaybackMode::LoopPause(_)) {
+        playback.mode = PlaybackMode::Playing;
+    }
+}
+
+fn advance_playback(world: &mut World) {
+    let Some(&ActiveSimulation(entity)) = world.get_resource::<ActiveSimulation>() else {
+        return;
+    };
+    let delta = world.resource::<Time>().delta();
+    let config = world.resource::<SimulationPlaybackConfig>();
+    let speed = config.speed;
+    let looping = config.looping;
+
+    world.resource_scope(|world, mut playback: Mut<SimulationPlayback>| {
+        match &mut playback.mode {
+            PlaybackMode::Paused => {}
+            PlaybackMode::LoopPause(timer) => {
+                timer.tick(delta);
+                if timer.just_finished() {
+                    if let Some(init_step) = clone_init_step(world, entity) {
+                        init_step.apply(world);
+                    }
+                    playback.elapsed = Duration::ZERO;
+                    playback.step_idx = 0;
+                    playback.mode = PlaybackMode::Playing;
+                }
+            }
+            PlaybackMode::Playing => {
+                playback.elapsed += delta.mul_f32(speed);
+
+                let Some(mut simulation) = world.get_mut::<Simulation>(entity) else {
+                    return;
+                };
+                let complete = simulation.state() == SimulationState::Complete;
+                let steps = simulation.steps();
+                let num_steps = steps.len();
+                let pending_steps: Vec<SimulationStep> = steps
+                    .iter()
+                    .skip(playback.step_idx)
+                    .take_while(|(time, _)| time.elapsed() <= playback.elapsed)
+                    .map(|(_, step)| step.clone())
+                    .collect();
+                playback.step_idx += pending_steps.len();
+                for step in pending_steps {
+                    step.apply(world);
+                }
+
+                if complete && playback.step_idx >= num_steps {
+                    match looping {
+                        LoopBehavior::None => {
+                            playback.mode = PlaybackMode::Paused;
+                        }
+                        LoopBehavior::Pause(duration) => {
+                            playback.mode =
+                                PlaybackMode::LoopPause(Timer::new(duration, TimerMode::Once));
+                        }
+                    }
+                }
+            }
         }
     });
 }
 
-#[derive(Resource)]
-struct Pause(Timer);
-
-fn start_pause(mut commands: Commands) {
-    commands.insert_resource(Pause(Timer::from_seconds(
-        PAUSE_BEFORE_REPLAY_SECONDS,
-        TimerMode::Once,
-    )));
-}
-
-fn pause(
-    time: Res<Time>,
-    mut timer: ResMut<Pause>,
-    mut next_state: ResMut<NextState<PlaybackState>>,
-) {
-    timer.0.tick(time.delta());
-    if timer.0.just_finished() {
-        next_state.set(PlaybackState::Playing);
-    }
-}
-
-fn reset(world: &mut World) {
-    world.remove_resource::<Pause>();
-    let mut query = world.query::<&mut Simulation>();
-    let mut simulation = query.single_mut(world).unwrap();
-    let init_step = simulation.init_step().clone();
-    init_step.apply(world);
+fn clone_init_step(world: &mut World, entity: Entity) -> Option<SimulationStep> {
+    world
+        .get_mut::<Simulation>(entity)
+        .map(|mut simulation| simulation.init_step().clone())
 }
