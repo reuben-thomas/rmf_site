@@ -36,7 +36,7 @@ struct Request {
     goal: Entity,
 }
 
-/// Robots and waypoitns for which requests have already been submitted.
+/// Robots and waypoints for which requests have already been submitted.
 #[derive(Resource, Clone, Default)]
 struct ActiveRequestEntities {
     robots: EntityHashSet,
@@ -85,10 +85,8 @@ fn main() {
 
 /// Setup the world, builds and spawns a simulation.
 fn setup(world: &mut World) {
-    let position_bounds = Rect::from_center_half_size(
-        Vec2::ZERO,
-        Vec2::new(SIMULATION_AREA_HALF_SIZE, SIMULATION_AREA_HALF_SIZE),
-    );
+    let position_bounds =
+        Rect::from_center_half_size(Vec2::ZERO, Vec2::splat(SIMULATION_AREA_HALF_SIZE));
 
     world.spawn((
         Camera2d,
@@ -137,18 +135,16 @@ fn request_generator(
     active_request_entities: Res<ActiveRequestEntities>,
     mut changes: DiscreteChangeWriter,
 ) {
-    let mut idle_waypoints = waypoints
+    let idle_waypoints = waypoints
         .iter()
         .filter(|(waypoint, _)| !active_request_entities.waypoints.contains(waypoint));
     let idle_robots = robots
         .iter()
         .filter(|(robot, _)| !active_request_entities.robots.contains(robot));
 
-    for (i, (robot, robot_name)) in idle_robots.enumerate() {
-        let Some((goal, waypoint_name)) = idle_waypoints.next() else {
-            break;
-        };
-
+    for (i, ((robot, robot_name), (goal, waypoint_name))) in
+        idle_robots.zip(idle_waypoints).enumerate()
+    {
         let schedule_number = (active_request_entities.robots.len() + i) as u64;
         let time = SimulationTime::new(Duration::from_secs(
             REQUEST_ARRIVAL_STAGGER_SECONDS * schedule_number,
@@ -225,16 +221,13 @@ fn robot(
     robots: Query<(Entity, &Request, &Trajectory, &Name), With<Robot>>,
     mut poses: DiscreteComponentWriter<Pose>,
     mut waypoints: DiscreteComponentWriter<Waypoint>,
+    mut changes: DiscreteChangeWriter,
     clock: Res<SimulationComputeClock>,
 ) {
     let now = clock.now();
 
     for (robot, request, trajectory, robot_name) in robots.iter() {
         let end = trajectory.points.last().unwrap();
-        if end.time < now {
-            continue;
-        }
-
         for point in trajectory.points.iter().filter(|point| point.time > now) {
             poses.write(point.time, robot, point.pose);
             info!(
@@ -244,6 +237,9 @@ fn robot(
 
             if point.time == end.time {
                 waypoints.write(end.time, request.goal, Waypoint::Visited);
+                changes.write(end.time, move |world: &mut World| {
+                    world.entity_mut(robot).remove::<(Request, Trajectory)>();
+                });
                 info!(
                     "[robot] Scheduled waypoint visit for {} at {:?}",
                     robot_name, point.time
