@@ -22,13 +22,15 @@ use rmf_site_sim::{SimulationBuilder, SimulationPlugin};
 use std::time::Duration;
 
 /// Number of robots and goal waypoints to generate.
-const NUM_ROBOTS_WAYPOINTS: usize = 10;
+const NUM_ROBOTS_WAYPOINTS: usize = 5;
 /// The duration to stagger the arrival of consecutive requests in seconds.
-const REQUEST_ARRIVAL_STAGGER_SECONDS: u64 = 2;
+const REQUEST_ARRIVAL_STAGGER_SECONDS: u64 = 5;
 /// The half size of the square simulation area in meters.
 const SIMULATION_AREA_HALF_SIZE: f32 = 250.0;
 /// Number of steps to interpolate within a trajectory.
-const TRAJECTORY_INTERPOLATION_STEPS: usize = 10;
+const TRAJECTORY_INTERPOLATION_STEPS: usize = 20;
+/// The time taken for each robot to travel to
+const ROBOT_TRAVEL_DURATION: Duration = Duration::from_secs(10);
 
 /// A pending request for a robot.
 #[derive(Component, Clone)]
@@ -197,13 +199,14 @@ fn plan_trajectory(
     .to_curve()
     .unwrap();
 
-    let travel_duration = Duration::from_secs(10);
     let points = (0..=TRAJECTORY_INTERPOLATION_STEPS)
         .map(|current_step| {
             let progress = current_step as f32 / TRAJECTORY_INTERPOLATION_STEPS as f32;
             let velocity = curve.velocity(progress);
             TrajectoryPoint {
-                time: SimulationTime::new(start_time.elapsed() + travel_duration.mul_f32(progress)),
+                time: SimulationTime::new(
+                    start_time.elapsed() + ROBOT_TRAVEL_DURATION.mul_f32(progress),
+                ),
                 pose: Pose {
                     translation: curve.position(progress),
                     rotation: Quat::from_rotation_z(velocity.y.atan2(velocity.x)),
