@@ -11,58 +11,67 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Computes [`SimulationStep`]s for a simulation in a [`AsyncComputeTaskPool`].
 pub fn compute_async(
-    compute_plugin: SimulationComputePlugin,
+    update_sender: Sender<SimulationComputeUpdate>,
+    startup_schedule: Schedule,
+    system_schedule: Schedule,
     init_entities: Vec<Entity>,
     init_step: SimulationStep,
     plugins: Vec<PluginFactory>,
 ) {
-    let update_sender = compute_plugin.update_sender.clone();
+    let completion_sender = update_sender.clone();
     AsyncComputeTaskPool::get_or_init(TaskPool::new)
         .spawn(async move {
             let result = catch_unwind(AssertUnwindSafe(move || {
-                let mut app = App::new();
-                compute_plugin.build(&mut app);
-
-                let world = app.world_mut();
-                for entity in &init_entities {
-                    spawn_at(world, *entity);
-                }
-                init_step.apply(world);
-                for plugin in plugins {
-                    plugin(&mut app);
-                }
+                let mut app = build_app(
+                    update_sender,
+                    startup_schedule,
+                    system_schedule,
+                    init_entities,
+                    init_step,
+                    plugins,
+                );
                 app.run();
             }));
             let state = match result {
                 Ok(()) => SimulationState::Complete,
                 Err(_) => SimulationState::Failed,
             };
-            let _ = update_sender.send(SimulationComputeUpdate::State(state));
+            let _ = completion_sender.send(SimulationComputeUpdate::State(state));
         })
         .detach();
 }
 
-/// Configures an [`App`] to compute [`SimulationStep`]s for a simulation.
-pub struct SimulationComputePlugin {
-    pub startup_schedule: Schedule,
-    pub system_schedule: Schedule,
-    pub update_sender: Sender<SimulationComputeUpdate>,
-}
-
-impl SimulationComputePlugin {
-    fn build(self, app: &mut App) {
-        app.init_resource::<SimulationComputeClock>()
-            .init_resource::<DiscreteEvents>()
-            .init_resource::<SimulationEventBuffer>()
-            .insert_resource(StateUpdateSender::new(self.update_sender));
-
-        app.add_schedule(self.startup_schedule);
-        app.add_schedule(self.system_schedule);
-        app.set_runner(run_compute_simulation);
+fn build_app(
+    update_sender: Sender<SimulationComputeUpdate>,
+    startup_schedule: Schedule,
+    system_schedule: Schedule,
+    init_entities: Vec<Entity>,
+    init_step: SimulationStep,
+    plugins: Vec<PluginFactory>,
+) -> App {
+    let mut app = App::new();
+    app.add_schedule(startup_schedule);
+    app.add_schedule(system_schedule);
+    app.init_resource::<SimulationComputeClock>()
+        .init_resource::<DiscreteEvents>()
+        .init_resource::<SimulationEventBuffer>()
+        .insert_resource(StateUpdateSender::new(update_sender));
+    app.set_runner(compute_simulation);
+    init_world(app.world_mut(), init_entities, init_step);
+    for plugin in plugins {
+        plugin(&mut app);
     }
+    app
 }
 
-fn run_compute_simulation(mut app: App) -> AppExit {
+fn init_world(world: &mut World, init_entities: Vec<Entity>, init_step: SimulationStep) {
+    for entity in init_entities {
+        spawn_at(world, entity);
+    }
+    init_step.apply(world);
+}
+
+fn compute_simulation(mut app: App) -> AppExit {
     let world = app.world_mut();
     world.run_schedule(SimulationStartup);
     loop {
@@ -92,7 +101,7 @@ fn compute_time_step(world: &mut World) {
 
 pub fn sync_with_clock(events: Res<DiscreteEvents>, mut clock: ResMut<SimulationComputeClock>) {
     if let Some(time) = events.next_time() {
-        clock.try_add_pending(time);
+        clock.insert_pending(time);
     }
 }
 
@@ -113,7 +122,7 @@ impl SimulationComputeClock {
     /// Adds a pending time to be processed.
     ///
     /// Returns whether a new pending time was added.
-    pub fn try_add_pending(&mut self, time: SimulationTime) -> bool {
+    pub fn insert_pending(&mut self, time: SimulationTime) -> bool {
         if time <= self.current {
             panic!(
                 "Tried to add time {time:?} that is not greater than the current time {:?}.",
