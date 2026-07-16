@@ -1,4 +1,4 @@
-use crate::compute::{SimulationComputePlugin, compute_async};
+use crate::compute::compute_async;
 use crate::event::DiscreteEvent;
 use crate::schedule::{
     ScheduleBuilder, SimulationModelSystemExec, SimulationStartup, SystemExecutionOrdering,
@@ -49,7 +49,7 @@ impl SimulationBuilder {
         }
     }
 
-    /// Adds a plugin to the simulation [`SubApp`].
+    /// Adds a plugin to the simulation [`App`].
     pub fn add_plugins<M>(mut self, plugins: impl Plugins<M> + Send + 'static) -> Self {
         self.plugins.push(Box::new(move |app| {
             app.add_plugins(plugins);
@@ -115,12 +115,14 @@ impl Simulation {
             events: builder.extractor.create_extract_events(world),
         };
         let (update_sender, update_receiver) = unbounded();
-        let compute_plugin = SimulationComputePlugin {
-            startup_schedule: builder.startup_schedule_builder.build(),
-            system_schedule: builder.model_system_schedule_builder.build(),
+        compute_async(
             update_sender,
-        };
-        compute_async(compute_plugin, entities, init_step.clone(), builder.plugins);
+            builder.startup_schedule_builder.build(),
+            builder.model_system_schedule_builder.build(),
+            entities,
+            init_step.clone(),
+            builder.plugins,
+        );
 
         Self {
             init_step: SyncCell::new(init_step),
