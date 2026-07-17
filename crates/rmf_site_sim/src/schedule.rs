@@ -221,8 +221,16 @@ mod tests {
     }
 
     #[test]
-    fn test_total_ordering_ambiguity_fail() {
+    fn test_ordering_ambiguity_enforced() {
         let mut world = World::new();
+
+        let mut schedule = ScheduleBuilder::new(TestSchedule)
+            .add_systems(a)
+            .set_ordering(SystemExecutionOrdering::Partial)
+            .build();
+        schedule.add_systems(c);
+        assert!(schedule.initialize(&mut world).is_ok());
+
         let mut schedule = ScheduleBuilder::new(TestSchedule)
             .add_systems(a)
             .set_ordering(SystemExecutionOrdering::Total)
