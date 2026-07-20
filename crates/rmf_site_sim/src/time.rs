@@ -6,11 +6,11 @@ use std::time::Duration;
 pub struct SimulationTime(Duration);
 
 impl SimulationTime {
-    pub const fn new(elapsed: Duration) -> Self {
+    pub fn new(elapsed: Duration) -> Self {
         Self(elapsed)
     }
 
-    pub const fn elapsed(&self) -> Duration {
+    pub fn elapsed(&self) -> Duration {
         self.0
     }
 }
