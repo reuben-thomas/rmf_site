@@ -21,15 +21,18 @@ impl Plugin for SimulationPlugin {
     }
 }
 
+/// Adds one or more plugins to the target world's [`App`].
+pub type SimulationPluginFactory = Box<dyn FnOnce(&mut App) + Send>;
+
 /// Builds a [`Simulation`].
-pub struct SimulationBuilder {
-    extractor: Extractor,
+pub struct SimulationBuilder<M: Component> {
+    extractor: Extractor<M>,
     startup_schedule_builder: ScheduleBuilder,
     model_system_schedule_builder: ScheduleBuilder,
-    plugins: Vec<PluginFactory>,
+    plugins: Vec<SimulationPluginFactory>,
 }
 
-impl Default for SimulationBuilder {
+impl<M: Component> Default for SimulationBuilder<M> {
     fn default() -> Self {
         Self::new()
     }
@@ -37,8 +40,9 @@ impl Default for SimulationBuilder {
 
 /// Builder for creating a [`Simulation`].
 ///
-/// All registered resources and components, as well as their corresponding entities are extracted into the simulation world.
-impl SimulationBuilder {
+/// All registered resources and components, as well as their corresponding entities with the
+/// marker component `M` are extracted into the simulation world.
+impl<M: Component> SimulationBuilder<M> {
     pub fn new() -> Self {
         Self {
             extractor: Extractor::default(),
@@ -47,14 +51,6 @@ impl SimulationBuilder {
                 .set_ordering(SystemExecutionOrdering::Total),
             plugins: Vec::new(),
         }
-    }
-
-    /// Adds a plugin to the simulation [`App`].
-    pub fn add_plugins<M>(mut self, plugins: impl Plugins<M> + Send + 'static) -> Self {
-        self.plugins.push(Box::new(move |app| {
-            app.add_plugins(plugins);
-        }));
-        self
     }
 
     /// Registers a component to extract into the simulation world.
@@ -69,10 +65,18 @@ impl SimulationBuilder {
         self
     }
 
+    /// Adds a plugin to the simulation [`App`].
+    pub fn add_plugins<P>(mut self, plugins: impl Plugins<P> + Send + 'static) -> Self {
+        self.plugins.push(Box::new(move |app| {
+            app.add_plugins(plugins);
+        }));
+        self
+    }
+
     /// Adds a set of systems to be executed during simulation startup.
-    pub fn add_startup_systems<M>(
+    pub fn add_startup_systems<S>(
         mut self,
-        systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, S>,
     ) -> Self {
         self.startup_schedule_builder = self.startup_schedule_builder.add_systems(systems);
         self
@@ -80,9 +84,9 @@ impl SimulationBuilder {
 
     /// Adds a set of systems to be executed when computing simulation steps.
     /// These systems should represent models in the discrete event simulation.
-    pub fn add_simulation_model_systems<M>(
+    pub fn add_simulation_model_systems<S>(
         mut self,
-        systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, S>,
     ) -> Self {
         self.model_system_schedule_builder =
             self.model_system_schedule_builder.add_systems(systems);
@@ -95,9 +99,6 @@ impl SimulationBuilder {
     }
 }
 
-/// Adds one or more plugins to the target world's [`App`].
-pub type PluginFactory = Box<dyn FnOnce(&mut App) + Send>;
-
 /// A unique discrete event simulation.
 #[derive(Component)]
 pub struct Simulation {
@@ -109,7 +110,7 @@ pub struct Simulation {
 
 impl Simulation {
     // TODO: Should extract be performed explicitly? e.g. Simulation::extract, Simulation::compute
-    fn new(builder: SimulationBuilder, world: &World) -> Self {
+    fn new<M: Component>(builder: SimulationBuilder<M>, world: &World) -> Self {
         let entities = builder.extractor.extract_entities(world);
         let init_step = SimulationStep {
             events: builder.extractor.create_extract_events(world),

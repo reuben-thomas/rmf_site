@@ -1,6 +1,6 @@
 use crate::event::{DiscreteEvents, execute_first_instant_event, execute_scheduled_events};
 use crate::schedule::{SimulationModelSystemExec, SimulationStartup};
-use crate::simulation::{PluginFactory, SimulationComputeUpdate, SimulationState, SimulationStep};
+use crate::simulation::{SimulationPluginFactory, SimulationComputeUpdate, SimulationState, SimulationStep};
 use crate::sync::{SimulationEventBuffer, StateUpdateSender};
 use crate::time::SimulationTime;
 use bevy::prelude::*;
@@ -16,7 +16,7 @@ pub fn compute_async(
     system_schedule: Schedule,
     init_entities: Vec<Entity>,
     init_step: SimulationStep,
-    plugins: Vec<PluginFactory>,
+    plugins: Vec<SimulationPluginFactory>,
 ) {
     let completion_sender = update_sender.clone();
     AsyncComputeTaskPool::get_or_init(TaskPool::new)
@@ -47,7 +47,7 @@ fn build_app(
     system_schedule: Schedule,
     init_entities: Vec<Entity>,
     init_step: SimulationStep,
-    plugins: Vec<PluginFactory>,
+    plugins: Vec<SimulationPluginFactory>,
 ) -> App {
     let mut app = App::new();
     app.add_schedule(startup_schedule);
@@ -160,7 +160,7 @@ impl SimulationComputeClock {
 
 // TODO: This method is only in newer versions of Bevy, this is a workaround.
 // https://docs.rs/bevy/latest/bevy/prelude/struct.World.html#method.spawn_at
-fn spawn_at(world: &mut World, entity: Entity) {
+pub fn spawn_at(world: &mut World, entity: Entity) {
     #[allow(deprecated)]
     let _ = world.insert_or_spawn_batch([(entity, ())]);
 }
