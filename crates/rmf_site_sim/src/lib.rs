@@ -15,7 +15,7 @@
  *
 */
 
-//! # rmf_site_sim
+//! # `rmf_site_sim`
 //!
 //! `rmf_site_sim` provides the ability to perform
 //! [discrete-event simulation](https://en.wikipedia.org/wiki/Discrete-event_simulation) (DES) in Bevy,
