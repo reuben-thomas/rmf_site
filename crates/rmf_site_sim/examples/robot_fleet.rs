@@ -24,7 +24,7 @@ use std::time::Duration;
 /// Number of robots and goal waypoints to generate.
 const NUM_ROBOTS_WAYPOINTS: usize = 5;
 /// The duration to stagger the arrival of consecutive requests in seconds.
-const REQUEST_ARRIVAL_STAGGER_SECONDS: u64 = 5;
+const REQUEST_ARRIVAL_STAGGER_SECONDS: u64 = 2;
 /// The half size of the square simulation area in meters.
 const SIMULATION_AREA_HALF_SIZE: f32 = 250.0;
 /// Number of steps to interpolate within a trajectory.
@@ -44,6 +44,10 @@ struct ActiveRequestEntities {
     robots: EntityHashSet,
     waypoints: EntityHashSet,
 }
+
+/// A marker component for entities extracted into the simulation world.
+#[derive(Component, Clone)]
+struct Simulated;
 
 /// A marker component for a robot.
 #[derive(Component, Clone, Debug)]
@@ -98,8 +102,9 @@ fn setup(world: &mut World) {
     spawn_robots_waypoints(world, NUM_ROBOTS_WAYPOINTS, position_bounds);
     world.insert_resource(ActiveRequestEntities::default());
 
-    let simulation = SimulationBuilder::new()
-        // Components and resources extracted into the simulation world.
+    let simulation = SimulationBuilder::<Simulated>::new()
+        // Components and resources extracted into the simulation world,
+        // for entities with the marker component.
         .register_component::<Robot>()
         .register_component::<Name>()
         .register_component::<Pose>()
@@ -118,11 +123,13 @@ fn spawn_robots_waypoints(world: &mut World, n: usize, position_bounds: Rect) {
 
     for i in 0..n {
         world.spawn((
+            Simulated,
             Robot,
             Name::new(format!("Robot{i}")),
             random_axis_aligned_pose(&mut rng, position_bounds),
         ));
         world.spawn((
+            Simulated,
             Waypoint::Unvisited,
             Name::new(format!("Waypoint{i}")),
             random_axis_aligned_pose(&mut rng, position_bounds),

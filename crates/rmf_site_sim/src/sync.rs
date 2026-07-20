@@ -7,28 +7,74 @@ use bevy::ecs::system::Command;
 use bevy::prelude::*;
 use bevy::utils::synccell::SyncCell;
 use crossbeam_channel::Sender;
+use std::any::TypeId;
+use std::collections::HashSet;
+use std::marker::PhantomData;
 
 /// Extracts entities, components, and resources from the main world into the simulation world.
-#[derive(Default, Clone)]
-pub struct Extractor {
+///
+/// Only entities with the marker component `M` are extracted.
+pub struct Extractor<M: Component> {
     component_extractors: Vec<ComponentExtractor>,
     resource_extractors: Vec<ResourceExtractor>,
+    registered_component_type_ids: HashSet<TypeId>,
+    registered_resource_type_ids: HashSet<TypeId>,
+    marker: PhantomData<M>,
 }
 
-impl Extractor {
-    // TODO: What if register_component is called twice for the same type?
+impl<M: Component> Default for Extractor<M> {
+    fn default() -> Self {
+        Self {
+            component_extractors: Vec::new(),
+            resource_extractors: Vec::new(),
+            registered_component_type_ids: HashSet::new(),
+            registered_resource_type_ids: HashSet::new(),
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<M: Component> Clone for Extractor<M> {
+    fn clone(&self) -> Self {
+        Self {
+            component_extractors: self.component_extractors.clone(),
+            resource_extractors: self.resource_extractors.clone(),
+            registered_component_type_ids: self.registered_component_type_ids.clone(),
+            registered_resource_type_ids: self.registered_resource_type_ids.clone(),
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<M: Component> Extractor<M> {
     /// Registers a component to extract.
     pub fn register_component<T: Component + Clone>(&mut self) {
+        if !self.registered_component_type_ids.insert(TypeId::of::<T>()) {
+            warn!(
+                "Component {} is already registered for extraction.",
+                std::any::type_name::<T>()
+            );
+            return;
+        }
+
         self.component_extractors
-            .push(ComponentExtractor::new::<T>());
+            .push(ComponentExtractor::new::<T, M>());
     }
 
     /// Registers a resource to extract.
     pub fn register_resource<T: Resource + Clone>(&mut self) {
+        if !self.registered_resource_type_ids.insert(TypeId::of::<T>()) {
+            warn!(
+                "Resource {} is already registered for extraction.",
+                std::any::type_name::<T>()
+            );
+            return;
+        }
+
         self.resource_extractors.push(ResourceExtractor::new::<T>());
     }
 
-    /// Extracts all entities that with at least one registered component.
+    /// Extracts all marked entities with at least one registered component.
     pub fn extract_entities(&self, world: &World) -> Vec<Entity> {
         let mut entities = EntityHashSet::default();
         for extractor in &self.component_extractors {
@@ -73,25 +119,32 @@ struct ComponentExtractor {
 }
 
 impl ComponentExtractor {
-    fn new<T: Component + Clone>() -> Self {
+    fn new<T: Component + Clone, M: Component>() -> Self {
         Self {
-            extract_entities: Self::extract_entities::<T>,
-            extract_components: Self::extract_components::<T>,
+            extract_entities: Self::extract_entities::<T, M>,
+            extract_components: Self::extract_components::<T, M>,
         }
     }
 
-    fn extract_entities<T: Component>(world: &World, entities: &mut EntityHashSet) {
-        let Some(mut query) = world.try_query_filtered::<Entity, With<T>>() else {
+    fn extract_entities<T: Component, M: Component>(world: &World, entities: &mut EntityHashSet) {
+        let Some(mut query) = world.try_query_filtered::<Entity, (With<T>, With<M>)>() else {
             return;
         };
         entities.extend(query.iter(world));
     }
 
-    fn extract_components<T: Component + Clone>(world: &World) -> Box<dyn DiscreteEvent> {
+    fn extract_components<T: Component + Clone, M: Component>(
+        world: &World,
+    ) -> Box<dyn DiscreteEvent> {
         let components = world
-            .iter_entities()
-            .filter_map(|entity| Some((entity.id(), entity.get::<T>().cloned()?)))
-            .collect();
+            .try_query_filtered::<(Entity, &T), With<M>>()
+            .map(|mut query| {
+                query
+                    .iter(world)
+                    .map(|(entity, component)| (entity, component.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
         Box::new(ExtractComponents::<T>(components))
     }
 }
@@ -181,5 +234,69 @@ impl SimulationEventBuffer {
         }
 
         sender.send(clock.now(), SimulationStep { events });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compute::spawn_at;
+
+    #[derive(Component, Clone)]
+    struct Marker;
+
+    #[derive(Component, Clone, Debug, PartialEq)]
+    struct Value(u32);
+
+    #[test]
+    fn test_marker_component_filters_extraction() {
+        let mut world = World::new();
+        let marked = world.spawn((Marker, Value(1))).id();
+        let unmarked = world.spawn(Value(2)).id();
+
+        let mut extractor = Extractor::<Marker>::default();
+        extractor.register_component::<Value>();
+
+        // Create a simulation world with the extracted entities and components.
+        let mut sim_world = World::new();
+        let extract_entities = extractor.extract_entities(&world);
+        for entity in extract_entities.clone() {
+            spawn_at(&mut sim_world, entity);
+        }
+        let extract_events = extractor.create_extract_events(&world);
+        for event in extract_events {
+            event.apply(&mut sim_world);
+        }
+
+        assert_eq!(
+            extract_entities,
+            vec![marked],
+            "Only the entity with the marker component should be extracted."
+        );
+        assert_eq!(
+            sim_world.get::<Value>(marked),
+            Some(&Value(1)),
+            "Marked entity should be extracted with its Value component."
+        );
+        assert_eq!(
+            sim_world.get::<Value>(unmarked),
+            None,
+            "Unmarked entity should not be extracted."
+        );
+    }
+
+    #[test]
+    fn test_duplicate_registration_ignored() {
+        #[derive(Resource, Clone)]
+        struct Config;
+
+        let mut extractor = Extractor::<Marker>::default();
+        for _ in 0..2 {
+            extractor.register_component::<Value>();
+            extractor.register_resource::<Config>();
+        }
+
+        assert_eq!(extractor.component_extractors.len(), 1);
+        assert_eq!(extractor.resource_extractors.len(), 1);
     }
 }
