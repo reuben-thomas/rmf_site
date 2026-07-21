@@ -2,7 +2,6 @@ use crate::playback::{
     SeekDirection, SimulationPlayback, SimulationPlaybackCommand, SimulationPlaybackSeek,
     SimulationPlaybackState,
 };
-use crate::time::SimulationTime;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
@@ -115,21 +114,10 @@ fn playback_keyboard_controls(
                 ));
             }
             SimulationPlaybackKeyboardAction::SeekToStart => {
-                commands.write(SimulationPlaybackCommand::Seek(
-                    SimulationPlaybackSeek::Time {
-                        time: SimulationTime::default(),
-                    },
-                ));
-                commands.write(SimulationPlaybackCommand::Pause);
+                commands.write(SimulationPlaybackCommand::SeekToStart);
             }
             SimulationPlaybackKeyboardAction::SeekToEnd => {
-                commands.write(SimulationPlaybackCommand::Seek(
-                    SimulationPlaybackSeek::StepDelta {
-                        steps: usize::MAX,
-                        direction: SeekDirection::Advance,
-                    },
-                ));
-                commands.write(SimulationPlaybackCommand::Pause);
+                commands.write(SimulationPlaybackCommand::SeekToEnd);
             }
         }
     }

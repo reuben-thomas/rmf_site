@@ -28,6 +28,10 @@ pub enum SimulationPlaybackCommand {
     Pause,
     /// Seeks to the given target, forwards or backwards.
     Seek(SimulationPlaybackSeek),
+    /// Seeks to the start of the simulation and pauses.
+    SeekToStart,
+    /// Seeks to the last computed step of the simulation and pauses.
+    SeekToEnd,
     /// Sets the behaviour of playback upon reaching the end of the active simulation.
     SetEndBehaviour(SimulationPlaybackEndBehaviour),
 }
@@ -37,8 +41,8 @@ pub enum SimulationPlaybackCommand {
 pub enum SimulationPlaybackSeek {
     /// Seek to the very first step at or after the specified time.
     Time { time: SimulationTime },
-    /// Seek so that exactly `step_idx` steps have been applied.
-    Step { step_idx: usize },
+    /// Seek so that exactly `applied_steps` steps have been applied.
+    Step { applied_steps: usize },
     /// Seek by the given number of steps in the specified direction.
     StepDelta {
         steps: usize,
@@ -49,7 +53,14 @@ pub enum SimulationPlaybackSeek {
         duration: Duration,
         direction: SeekDirection,
     },
+    /// Seek to the last computed step.
+    End,
 }
+
+// TODO: Distinguish OOB between a complete and in progress computation simulation.
+/// The requested seek falls out of simulation's computed steps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SimulationPlaybackSeekOutOfBounds;
 
 /// The direction to seek in [`SimulationPlaybackSeek`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,7 +94,7 @@ pub enum SimulationPlaybackState {
 }
 
 #[derive(Resource, Default)]
-pub struct SimulationPlayback(Option<SimulationAcyivePlayback>);
+pub struct SimulationPlayback(Option<SimulationActivePlayback>);
 
 impl SimulationPlayback {
     pub fn state(&self) -> Option<&SimulationPlaybackState> {
@@ -95,14 +106,14 @@ impl SimulationPlayback {
             todo!("Handle cleanup of simulation artefacts");
         }
 
-        self.0 = simulation.map(SimulationAcyivePlayback::new);
+        self.0 = simulation.map(SimulationActivePlayback::new);
         if let Some(active) = self.0.as_mut() {
             active.reset(world);
         }
     }
 }
 
-struct SimulationAcyivePlayback {
+struct SimulationActivePlayback {
     /// The entity associated with the selected [`Simulation`] for playback.
     simulation: Entity,
     /// The state of playback.
@@ -112,34 +123,34 @@ struct SimulationAcyivePlayback {
     /// Unlike computation, this time is progressed
     /// incrementally rather than as discrete steps associated with events.
     time: SimulationTime,
-    /// The last applied [`SimulationStep`] index.
-    next_step_idx: usize,
+    /// The number of [`SimulationStep`]s that have been applied so far.
+    applied_steps: usize,
     /// The behaviour upon playing up to the end of the simulation.
     end_behaviour: SimulationPlaybackEndBehaviour,
 }
 
-impl SimulationAcyivePlayback {
+impl SimulationActivePlayback {
     fn new(simulation: Entity) -> Self {
         Self {
             simulation,
             state: SimulationPlaybackState::default(),
             time: SimulationTime::default(),
-            next_step_idx: 0,
+            applied_steps: 0,
             end_behaviour: SimulationPlaybackEndBehaviour::default(),
         }
     }
 
-    // Reset playback to initial state.
+    /// Reset playback to initial state.
     fn reset(&mut self, world: &mut World) {
         let simulation = self.simulation_mut(world);
         simulation.init_step().clone().apply(world);
         self.time = SimulationTime::from(Duration::ZERO);
-        self.next_step_idx = 0;
+        self.applied_steps = 0;
     }
 
-    /// Seeks by applying up to, and inclusive of `step_idx`.
-    fn seek_to_step(&mut self, world: &mut World, step_idx: usize) {
-        if step_idx < self.next_step_idx {
+    /// Applies exactly up to `applied_steps`.
+    fn apply_up_to(&mut self, world: &mut World, applied_steps: usize) {
+        if applied_steps < self.applied_steps {
             self.reset(world);
         }
 
@@ -147,58 +158,90 @@ impl SimulationAcyivePlayback {
         let pending_steps: Vec<_> = simulation
             .steps()
             .iter()
-            .take(step_idx + 1)
-            .skip(self.next_step_idx)
+            .take(applied_steps)
+            .skip(self.applied_steps)
             .map(|(time, step)| (*time, step.clone()))
             .collect();
 
         for (time, step) in pending_steps {
             step.apply(world);
             self.time = time;
-            self.next_step_idx += 1;
+            self.applied_steps += 1;
         }
+    }
+
+    /// Seeks so that exactly `applied_steps` steps have been applied.
+    fn seek_to_step(
+        &mut self,
+        world: &mut World,
+        applied_steps: usize,
+    ) -> Result<(), SimulationPlaybackSeekOutOfBounds> {
+        let available = self.simulation_mut(world).steps().len();
+        if applied_steps > available {
+            return Err(SimulationPlaybackSeekOutOfBounds);
+        }
+
+        self.apply_up_to(world, applied_steps);
+        Ok(())
     }
 
     /// Seeks to the specified time by applying all steps occuring up to and inclusive of `time`.
     fn seek_to_time(&mut self, world: &mut World, time: SimulationTime) {
-        let step_idx = self.simulation_mut(world).steps().range(..=time).count();
-        self.seek_to_step(world, step_idx);
+        let applied_steps = self.simulation_mut(world).steps().range(..=time).count();
+        self.apply_up_to(world, applied_steps);
         // Time is progressed incrementally, rather than last the time of the last step.
         self.time = time;
     }
 
+    // TODO: Distinguish between available end and actual end.
+    /// Seeks so that every computed step has been applied.
+    fn seek_to_end(&mut self, world: &mut World) {
+        let available = self.simulation_mut(world).steps().len();
+        self.apply_up_to(world, available);
+    }
+
     /// Seeks the playback to a `target`.
-    fn seek(&mut self, world: &mut World, target: SimulationPlaybackSeek) {
-        // TODO: Handle overflows, out of bounds
+    fn seek(
+        &mut self,
+        world: &mut World,
+        target: SimulationPlaybackSeek,
+    ) -> Result<(), SimulationPlaybackSeekOutOfBounds> {
         match target {
             SimulationPlaybackSeek::Time { time } => {
                 self.seek_to_time(world, time);
             }
-            SimulationPlaybackSeek::Step { step_idx } => {
-                self.seek_to_step(world, step_idx);
+            SimulationPlaybackSeek::Step { applied_steps } => {
+                self.seek_to_step(world, applied_steps)?;
             }
             SimulationPlaybackSeek::StepDelta { steps, direction } => {
-                self.seek_to_step(
-                    world,
-                    match direction {
-                        SeekDirection::Advance => self.next_step_idx + steps,
-                        SeekDirection::Revert => self.next_step_idx - (steps + 1),
-                    },
-                );
+                let target = match direction {
+                    SeekDirection::Advance => self.applied_steps.saturating_add(steps),
+                    SeekDirection::Revert => self
+                        .applied_steps
+                        .checked_sub(steps)
+                        .ok_or(SimulationPlaybackSeekOutOfBounds)?,
+                };
+                self.seek_to_step(world, target)?;
             }
             SimulationPlaybackSeek::TimeDelta {
                 duration,
                 direction,
             } => {
-                self.seek_to_time(
-                    world,
-                    SimulationTime::new(match direction {
-                        SeekDirection::Advance => self.time.elapsed() + duration,
-                        SeekDirection::Revert => self.time.elapsed() - duration,
-                    }),
-                );
+                let elapsed = match direction {
+                    SeekDirection::Advance => self.time.elapsed() + duration,
+                    SeekDirection::Revert => self
+                        .time
+                        .elapsed()
+                        .checked_sub(duration)
+                        .ok_or(SimulationPlaybackSeekOutOfBounds)?,
+                };
+                self.seek_to_time(world, SimulationTime::new(elapsed));
+            }
+            SimulationPlaybackSeek::End => {
+                self.seek_to_end(world);
             }
         }
+        Ok(())
     }
 
     /// Whether playback is at the end of a simulation that has finished computation.
@@ -207,7 +250,7 @@ impl SimulationAcyivePlayback {
         matches!(
             simulation.state(),
             SimulationState::Complete | SimulationState::Failed
-        ) && self.next_step_idx >= simulation.steps().len()
+        ) && self.applied_steps >= simulation.steps().len()
     }
 
     fn simulation_mut<'w>(&self, world: &'w mut World) -> &'w mut Simulation {
@@ -247,7 +290,26 @@ fn process_commands(world: &mut World, mut cursor: Local<EventCursor<SimulationP
                     active.state = SimulationPlaybackState::Paused;
                 }
                 SimulationPlaybackCommand::Seek(target) => {
-                    active.seek(world, target);
+                    if let Err(err) = active.seek(world, target) {
+                        warn!("Ignoring out-of-bounds playback seek {target:?}: {err:?}");
+                    }
+                }
+                SimulationPlaybackCommand::SeekToStart => {
+                    if let Err(err) = active.seek(
+                        world,
+                        SimulationPlaybackSeek::Time {
+                            time: SimulationTime::default(),
+                        },
+                    ) {
+                        warn!("Failed to seek playback to start: {err:?}");
+                    }
+                    active.state = SimulationPlaybackState::Paused;
+                }
+                SimulationPlaybackCommand::SeekToEnd => {
+                    if let Err(err) = active.seek(world, SimulationPlaybackSeek::End) {
+                        warn!("Failed to seek playback to end: {err:?}");
+                    }
+                    active.state = SimulationPlaybackState::Paused;
                 }
                 SimulationPlaybackCommand::SetEndBehaviour(end_behaviour) => {
                     active.end_behaviour = end_behaviour;
