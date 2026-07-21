@@ -1,6 +1,8 @@
 use crate::event::{DiscreteEvents, execute_first_instant_event, execute_scheduled_events};
 use crate::schedule::{SimulationModelSystemExec, SimulationStartup};
-use crate::simulation::{SimulationPluginFactory, SimulationComputeUpdate, SimulationState, SimulationStep};
+use crate::simulation::{
+    SimulationComputeUpdate, SimulationPluginFactory, SimulationState, SimulationStep,
+};
 use crate::sync::{SimulationEventBuffer, StateUpdateSender};
 use crate::time::SimulationTime;
 use bevy::prelude::*;

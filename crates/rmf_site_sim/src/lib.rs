@@ -39,6 +39,7 @@
 pub mod compute;
 pub mod event;
 pub mod playback;
+pub mod playback_ui;
 pub mod schedule;
 pub mod simulation;
 pub mod sync;
