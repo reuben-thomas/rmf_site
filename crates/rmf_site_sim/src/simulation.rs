@@ -142,6 +142,7 @@ impl Simulation {
         self.init_step.get()
     }
 
+    // TODO: Should this provide an iterator instead?
     /// The computed simulation steps, ordered by simulation time.
     pub fn steps(&mut self) -> &BTreeMap<SimulationTime, SimulationStep> {
         self.simulation_steps.get()

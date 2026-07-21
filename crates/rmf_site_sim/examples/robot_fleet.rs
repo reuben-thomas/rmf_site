@@ -16,7 +16,10 @@ use bevy::prelude::*;
 use rand::Rng;
 use rmf_site_sim::compute::SimulationComputeClock;
 use rmf_site_sim::event::{DiscreteChangeWriter, DiscreteComponentWriter};
-use rmf_site_sim::playback::SimulationPlaybackPlugin;
+use rmf_site_sim::playback::{
+    SimulationPlaybackCommand, SimulationPlaybackEndBehaviour, SimulationPlaybackPlugin,
+};
+use rmf_site_sim::playback_ui::{SimulationPlaybackKeyboardPlugin, SimulationPlaybackSpeed};
 use rmf_site_sim::time::SimulationTime;
 use rmf_site_sim::{SimulationBuilder, SimulationPlugin};
 use std::time::Duration;
@@ -31,6 +34,10 @@ const SIMULATION_AREA_HALF_SIZE: f32 = 250.0;
 const TRAJECTORY_INTERPOLATION_STEPS: usize = 20;
 /// The time taken for each robot to travel to
 const ROBOT_TRAVEL_DURATION: Duration = Duration::from_secs(10);
+/// The speed multiplier used for simulation playback.
+const PLAYBACK_SPEED: f32 = 5.0;
+/// The duration to pause for before replaying the simulation.
+const PAUSE_BEFORE_REPLAY: Duration = Duration::from_secs(1);
 
 /// A pending request for a robot.
 #[derive(Component, Clone)]
@@ -82,7 +89,12 @@ enum Waypoint {
 
 fn main() {
     App::new()
-        .add_plugins((DefaultPlugins, SimulationPlugin, SimulationPlaybackPlugin))
+        .add_plugins((
+            DefaultPlugins,
+            SimulationPlugin,
+            SimulationPlaybackPlugin,
+            SimulationPlaybackKeyboardPlugin,
+        ))
         .add_systems(Startup, setup)
         // Visualization systems to show states during playback.
         .add_systems(Update, (draw_robots, draw_waypoints, draw_trajectory))
@@ -114,7 +126,22 @@ fn setup(world: &mut World) {
         .add_simulation_model_systems((request_generator, planner, robot))
         .build(world);
 
-    world.spawn(simulation);
+    let simulation_entity = world.spawn(simulation).id();
+
+    // Use `PLAYBACK_SPEED` as the default speed for keyboard-driven playback,
+    // instead of the default 1.0x speed.
+    world.insert_resource(SimulationPlaybackSpeed(PLAYBACK_SPEED));
+
+    // Select the simulation to play back, replay it on a loop, and start playing.
+    world.send_event(SimulationPlaybackCommand::SetActiveSimulation(Some(
+        simulation_entity,
+    )));
+    world.send_event(SimulationPlaybackCommand::SetEndBehaviour(
+        SimulationPlaybackEndBehaviour::ReplayAfterPause(PAUSE_BEFORE_REPLAY),
+    ));
+    world.send_event(SimulationPlaybackCommand::Play {
+        speed: PLAYBACK_SPEED,
+    });
 }
 
 /// Spawns a specified number of robots and waypoints of random pose within bounds.
