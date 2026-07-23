@@ -1,16 +1,16 @@
 use crate::compute::compute_async;
 use crate::event::DiscreteEvent;
 use crate::schedule::{
-    ScheduleBuilder, SimulationModelSystemExec, SimulationStartup, SystemExecutionOrdering,
+    ScheduleBuilder, SimulationStartup, SimulationSystemExec, SystemExecutionOrdering,
 };
-use crate::sync::Extractor;
+use crate::sync::Synchronizer;
 use crate::time::SimulationTime;
 use bevy::app::Plugins;
 use bevy::ecs::system::ScheduleSystem;
 use bevy::prelude::*;
-use bevy::utils::synccell::SyncCell;
 use crossbeam_channel::{Receiver, unbounded};
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
 
 /// Plugin for computing discrete event simulations.
 pub struct SimulationPlugin;
@@ -25,14 +25,15 @@ impl Plugin for SimulationPlugin {
 pub type SimulationPluginFactory = Box<dyn FnOnce(&mut App) + Send>;
 
 /// Builds a [`Simulation`].
-pub struct SimulationBuilder<M: Component> {
-    extractor: Extractor<M>,
+pub struct SimulationBuilder<M: Component + Clone> {
+    synchronizer: Synchronizer,
+    marker: PhantomData<M>,
     startup_schedule_builder: ScheduleBuilder,
-    model_system_schedule_builder: ScheduleBuilder,
+    system_schedule_builder: ScheduleBuilder,
     plugins: Vec<SimulationPluginFactory>,
 }
 
-impl<M: Component> Default for SimulationBuilder<M> {
+impl<M: Component + Clone> Default for SimulationBuilder<M> {
     fn default() -> Self {
         Self::new()
     }
@@ -42,26 +43,27 @@ impl<M: Component> Default for SimulationBuilder<M> {
 ///
 /// All registered resources and components, as well as their corresponding entities with the
 /// marker component `M` are extracted into the simulation world.
-impl<M: Component> SimulationBuilder<M> {
+impl<M: Component + Clone> SimulationBuilder<M> {
     pub fn new() -> Self {
         Self {
-            extractor: Extractor::default(),
+            synchronizer: Synchronizer::new::<M>(),
             startup_schedule_builder: ScheduleBuilder::new(SimulationStartup),
-            model_system_schedule_builder: ScheduleBuilder::new(SimulationModelSystemExec)
+            system_schedule_builder: ScheduleBuilder::new(SimulationSystemExec)
                 .set_ordering(SystemExecutionOrdering::Total),
             plugins: Vec::new(),
+            marker: PhantomData,
         }
     }
 
-    /// Registers a component to extract into the simulation world.
+    /// Registers a component to synchronize into the simulation world.
     pub fn register_component<T: Component + Clone>(mut self) -> Self {
-        self.extractor.register_component::<T>();
+        self.synchronizer.register_component::<T, M>();
         self
     }
 
-    /// Registers a resource to extract into the simulation world.
+    /// Registers a resource to synchronize into the simulation world.
     pub fn register_resource<T: Resource + Clone>(mut self) -> Self {
-        self.extractor.register_resource::<T>();
+        self.synchronizer.register_resource::<T>();
         self
     }
 
@@ -84,12 +86,11 @@ impl<M: Component> SimulationBuilder<M> {
 
     /// Adds a set of systems to be executed when computing simulation steps.
     /// These systems should represent models in the discrete event simulation.
-    pub fn add_simulation_model_systems<S>(
+    pub fn add_simulation_systems<S>(
         mut self,
         systems: impl IntoScheduleConfigs<ScheduleSystem, S>,
     ) -> Self {
-        self.model_system_schedule_builder =
-            self.model_system_schedule_builder.add_systems(systems);
+        self.system_schedule_builder = self.system_schedule_builder.add_systems(systems);
         self
     }
 
@@ -102,50 +103,51 @@ impl<M: Component> SimulationBuilder<M> {
 /// A unique discrete event simulation.
 #[derive(Component)]
 pub struct Simulation {
-    init_step: SyncCell<SimulationStep>,
-    simulation_steps: SyncCell<BTreeMap<SimulationTime, SimulationStep>>,
-    state: SimulationState,
+    init_state: SimulationState,
+    synchronizer: Synchronizer,
+    simulation_steps: BTreeMap<SimulationTime, SimulationStep>,
+    state: SimulationComputeState,
     update_receiver: Receiver<SimulationComputeUpdate>,
 }
 
 impl Simulation {
     // TODO: Should extract be performed explicitly? e.g. Simulation::extract, Simulation::compute
-    fn new<M: Component>(builder: SimulationBuilder<M>, world: &World) -> Self {
-        let entities = builder.extractor.extract_entities(world);
-        let init_step = SimulationStep {
-            events: builder.extractor.create_extract_events(world),
-        };
-        let (update_sender, update_receiver) = unbounded();
+    fn new<M: Component + Clone>(builder: SimulationBuilder<M>, world: &World) -> Self {
+        let (sender, receiver) = unbounded();
         compute_async(
-            update_sender,
+            builder.synchronizer.create_state(world),
             builder.startup_schedule_builder.build(),
-            builder.model_system_schedule_builder.build(),
-            entities,
-            init_step.clone(),
+            builder.system_schedule_builder.build(),
             builder.plugins,
+            builder.synchronizer.clone(),
+            sender,
         );
 
         Self {
-            init_step: SyncCell::new(init_step),
-            simulation_steps: SyncCell::new(BTreeMap::new()),
-            state: SimulationState::Computing,
-            update_receiver,
+            init_state: builder.synchronizer.create_state(world),
+            synchronizer: builder.synchronizer,
+            simulation_steps: BTreeMap::new(),
+            state: SimulationComputeState::Computing,
+            update_receiver: receiver,
         }
     }
 
-    pub fn state(&self) -> SimulationState {
+    pub fn state(&self) -> SimulationComputeState {
         self.state
     }
 
-    /// The initial step of the simulation, which can be used to reset to the simulation's initial state.
-    pub fn init_step(&mut self) -> &SimulationStep {
-        self.init_step.get()
+    pub fn init_state(&self) -> &SimulationState {
+        &self.init_state
+    }
+
+    pub fn synchronizer(&self) -> &Synchronizer {
+        &self.synchronizer
     }
 
     // TODO: Should this provide an iterator instead?
     /// The computed simulation steps, ordered by simulation time.
-    pub fn steps(&mut self) -> &BTreeMap<SimulationTime, SimulationStep> {
-        self.simulation_steps.get()
+    pub fn steps(&self) -> &BTreeMap<SimulationTime, SimulationStep> {
+        &self.simulation_steps
     }
 
     // TODO: Time bound this system in order to avoid delaying the main app.
@@ -156,7 +158,7 @@ impl Simulation {
             for update in simulation.update_receiver.try_iter() {
                 match update {
                     SimulationComputeUpdate::Step(time, step) => {
-                        simulation.simulation_steps.get().insert(time, step);
+                        simulation.simulation_steps.insert(time, step);
                     }
                     SimulationComputeUpdate::State(state) => {
                         simulation.state = state;
@@ -167,13 +169,15 @@ impl Simulation {
     }
 }
 
-/// The current state of a simulation.
+/// The current state of a simulation's computation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SimulationState {
+pub enum SimulationComputeState {
     Computing,
     Complete,
     Failed,
 }
+
+pub struct SimulationState(pub World);
 
 /// A single computed simulation step.
 #[derive(Clone)]
@@ -191,5 +195,5 @@ impl SimulationStep {
 
 pub enum SimulationComputeUpdate {
     Step(SimulationTime, SimulationStep),
-    State(SimulationState),
+    State(SimulationComputeState),
 }

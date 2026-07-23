@@ -61,7 +61,7 @@ struct Simulated;
 struct Robot;
 
 /// A pose with translation and rotation.
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
 struct Pose {
     translation: Vec3,
     rotation: Quat,
@@ -123,7 +123,7 @@ fn setup(world: &mut World) {
         .register_component::<Waypoint>()
         .register_resource::<ActiveRequestEntities>()
         // Systems representing models used to compute the simulation.
-        .add_simulation_model_systems((request_generator, planner, robot))
+        .add_simulation_systems((request_generator, planner, robot))
         .build(world);
 
     let simulation_entity = world.spawn(simulation).id();
@@ -256,6 +256,7 @@ fn plan_trajectory(
 /// and marks the goal waypoint as visited when the trajectory ends.
 fn robot(
     robots: Query<(Entity, &Request, &Trajectory, &Name), With<Robot>>,
+    target_waypoints: Query<&Waypoint>,
     mut poses: DiscreteComponentWriter<Pose>,
     mut waypoints: DiscreteComponentWriter<Waypoint>,
     mut changes: DiscreteChangeWriter,
@@ -265,22 +266,34 @@ fn robot(
 
     for (robot, request, trajectory, robot_name) in robots.iter() {
         let end = trajectory.points.last().unwrap();
-        for point in trajectory.points.iter().filter(|point| point.time > now) {
-            poses.write(point.time, robot, point.pose);
-            info!(
-                "[robot] Scheduled pose update for {} at {:?}",
-                robot_name, point.time
-            );
-
-            if point.time == end.time {
-                waypoints.write(end.time, request.goal, Waypoint::Visited);
-                changes.write(end.time, move |world: &mut World| {
-                    world.entity_mut(robot).remove::<(Request, Trajectory)>();
-                });
+        for point in trajectory.points.iter().filter(|point| point.time >= now) {
+            if point.time > now {
+                poses.write(point.time, robot, point.pose);
                 info!(
-                    "[robot] Scheduled waypoint visit for {} at {:?}",
+                    "[robot] Scheduled pose update for {} at {:?}",
                     robot_name, point.time
                 );
+            }
+
+            if point.time == end.time {
+                match *target_waypoints.get(request.goal).unwrap() {
+                    Waypoint::Unvisited => {
+                        waypoints.write(end.time, request.goal, Waypoint::Visited);
+                        info!(
+                            "[robot] Scheduled waypoint visit for {} at {:?}",
+                            robot_name, point.time
+                        );
+                    }
+                    _ => {
+                        changes.write(end.time, move |world: &mut World| {
+                            world.entity_mut(robot).remove::<(Request, Trajectory)>();
+                        });
+                        info!(
+                            "[robot] Scheduled request completion for {} at {:?}",
+                            robot_name, point.time
+                        );
+                    }
+                }
             }
         }
     }
