@@ -1,6 +1,7 @@
 //! Playback of computed [`Simulation`] steps in the main world.
 
-use crate::simulation::{Simulation, SimulationComputeState, SimulationState};
+use crate::simulation::{Simulation, SimulationComputeState};
+use crate::sync::SimulationState;
 use crate::time::SimulationTime;
 use bevy::ecs::event::EventCursor;
 use bevy::prelude::*;
@@ -134,7 +135,7 @@ impl SimulationActivePlayback {
         let sim = world
             .get::<Simulation>(simulation)
             .expect("Active simulation entity has no Simulation component");
-        let pre_simulation_state = sim.synchronizer().create_state(world);
+        let pre_simulation_state = SimulationState::extract(sim.synchronizer(), world);
 
         let mut active = Self {
             simulation,
