@@ -3,11 +3,11 @@
 //! represented as a Bevy system.
 //!
 //! A request generator creates requests assigning robots to goal waypoints at random. A planner system
-//! generates trajectories from these requests. From the generated trajectories, a robot system then updates
-//! robot transforms and waypoint states.
+//! generates trajectories from these requests. From the generated trajectories, a robot system then
+//! predicts waypoint visits and request completions.
 //!
 //! ```
-//! RequestGeneratorSystem --[RequestEvent..]--> PlannerSystem --[TrajectoryEvent..]--> RobotSystem --[TransformEvent..]
+//! RequestGeneratorSystem --[RequestEvent..]--> PlannerSystem --[TrajectoryEvent..]--> RobotSystem --[WaypointEvent..]
 //! ```
 
 use bevy::color::palettes::basic;
@@ -17,7 +17,8 @@ use rand::Rng;
 use rmf_site_sim::compute::SimulationComputeClock;
 use rmf_site_sim::event::{DiscreteChangeWriter, DiscreteComponentWriter};
 use rmf_site_sim::playback::{
-    SimulationPlaybackCommand, SimulationPlaybackEndBehaviour, SimulationPlaybackPlugin,
+    SimulationPlayback, SimulationPlaybackCommand, SimulationPlaybackEndBehaviour,
+    SimulationPlaybackPlugin,
 };
 use rmf_site_sim::playback_ui::{SimulationPlaybackKeyboardPlugin, SimulationPlaybackSpeed};
 use rmf_site_sim::time::SimulationTime;
@@ -31,7 +32,7 @@ const REQUEST_ARRIVAL_STAGGER_SECONDS: u64 = 2;
 /// The half size of the square simulation area in meters.
 const SIMULATION_AREA_HALF_SIZE: f32 = 250.0;
 /// Number of steps to interpolate within a trajectory.
-const TRAJECTORY_INTERPOLATION_STEPS: usize = 20;
+const TRAJECTORY_INTERPOLATION_STEPS: usize = 4;
 /// The time taken for each robot to travel to
 const ROBOT_TRAVEL_DURATION: Duration = Duration::from_secs(10);
 /// The speed multiplier used for simulation playback.
@@ -80,6 +81,41 @@ struct Trajectory {
     points: Vec<TrajectoryPoint>,
 }
 
+impl Trajectory {
+    fn at(&self, time: SimulationTime) -> Option<Pose> {
+        let first = self.points.first()?;
+        let last = self.points.last()?;
+
+        if time <= first.time {
+            return Some(first.pose);
+        }
+        if time >= last.time {
+            return Some(last.pose);
+        }
+
+        let next_idx = self.points.partition_point(|point| point.time <= time);
+        let prev_point = &self.points[next_idx - 1];
+        let next_point = &self.points[next_idx];
+        let point_delta = next_point.time.elapsed() - prev_point.time.elapsed();
+        let progress = if point_delta.is_zero() {
+            0.0
+        } else {
+            (time.elapsed() - prev_point.time.elapsed()).as_secs_f32() / point_delta.as_secs_f32()
+        };
+
+        Some(Pose {
+            translation: prev_point
+                .pose
+                .translation
+                .lerp(next_point.pose.translation, progress),
+            rotation: prev_point
+                .pose
+                .rotation
+                .slerp(next_point.pose.rotation, progress),
+        })
+    }
+}
+
 /// A waypoint, which can be visited or unvisited.
 #[derive(Component, Clone, Debug, Eq, PartialEq)]
 enum Waypoint {
@@ -96,8 +132,15 @@ fn main() {
             SimulationPlaybackKeyboardPlugin,
         ))
         .add_systems(Startup, setup)
-        // Visualization systems to show states during playback.
-        .add_systems(Update, (draw_robots, draw_waypoints, draw_trajectory))
+        // Animation and visualization systems to show states during playback.
+        .add_systems(
+            Update,
+            (
+                animate_robots,
+                (draw_robots, draw_waypoints, draw_trajectory),
+            )
+                .chain(),
+        )
         .run();
 }
 
@@ -252,12 +295,11 @@ fn plan_trajectory(
     Trajectory { points }
 }
 
-/// A robot controller that schedules transform updates along a robot's trajectory,
-/// and marks the goal waypoint as visited when the trajectory ends.
+/// A robot controller that marks the goal waypoint as visited when a robot's trajectory ends,
+/// then completes the request by placing the robot at its goal.
 fn robot(
     robots: Query<(Entity, &Request, &Trajectory, &Name), With<Robot>>,
     target_waypoints: Query<&Waypoint>,
-    mut poses: DiscreteComponentWriter<Pose>,
     mut waypoints: DiscreteComponentWriter<Waypoint>,
     mut changes: DiscreteChangeWriter,
     clock: Res<SimulationComputeClock>,
@@ -266,35 +308,46 @@ fn robot(
 
     for (robot, request, trajectory, robot_name) in robots.iter() {
         let end = trajectory.points.last().unwrap();
-        for point in trajectory.points.iter().filter(|point| point.time >= now) {
-            if point.time > now {
-                poses.write(point.time, robot, point.pose);
+        if end.time < now {
+            continue;
+        }
+
+        match *target_waypoints.get(request.goal).unwrap() {
+            Waypoint::Unvisited => {
+                waypoints.write(end.time, request.goal, Waypoint::Visited);
                 info!(
-                    "[robot] Scheduled pose update for {} at {:?}",
-                    robot_name, point.time
+                    "[robot] Scheduled waypoint visit for {} at {:?}",
+                    robot_name, end.time
                 );
             }
-
-            if point.time == end.time {
-                match *target_waypoints.get(request.goal).unwrap() {
-                    Waypoint::Unvisited => {
-                        waypoints.write(end.time, request.goal, Waypoint::Visited);
-                        info!(
-                            "[robot] Scheduled waypoint visit for {} at {:?}",
-                            robot_name, point.time
-                        );
-                    }
-                    _ => {
-                        changes.write(end.time, move |world: &mut World| {
-                            world.entity_mut(robot).remove::<(Request, Trajectory)>();
-                        });
-                        info!(
-                            "[robot] Scheduled request completion for {} at {:?}",
-                            robot_name, point.time
-                        );
-                    }
-                }
+            _ => {
+                let end_pose = end.pose;
+                changes.write(end.time, move |world: &mut World| {
+                    world
+                        .entity_mut(robot)
+                        .insert(end_pose)
+                        .remove::<(Request, Trajectory)>();
+                });
+                info!(
+                    "[robot] Scheduled request completion for {} at {:?}",
+                    robot_name, end.time
+                );
             }
+        }
+    }
+}
+
+fn animate_robots(
+    playback: Res<SimulationPlayback>,
+    mut robots: Query<(&mut Pose, &Trajectory), With<Robot>>,
+) {
+    let Some(time) = playback.time() else {
+        return;
+    };
+
+    for (mut pose, trajectory) in &mut robots {
+        if let Some(interpolated) = trajectory.at(time) {
+            *pose = interpolated;
         }
     }
 }
