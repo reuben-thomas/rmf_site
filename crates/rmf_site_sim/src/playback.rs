@@ -102,6 +102,10 @@ impl SimulationPlayback {
         self.0.as_ref().map(|active| &active.state)
     }
 
+    pub fn time(&self) -> Option<SimulationTime> {
+        self.0.as_ref().map(|active| active.time)
+    }
+
     fn set_active_simulation(&mut self, world: &mut World, simulation: Option<Entity>) {
         if let Some(existing) = self.0.take() {
             existing.deactivate(world);
