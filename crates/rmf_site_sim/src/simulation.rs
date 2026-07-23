@@ -1,7 +1,8 @@
 use crate::compute::compute_async;
 use crate::event::DiscreteEvent;
 use crate::schedule::{
-    ScheduleBuilder, SimulationStartup, SimulationSystemExec, SystemExecutionOrdering,
+    ScheduleBuilder, SimulationStartup, SimulationSystemExec, SimulationVisualize,
+    SystemExecutionOrdering,
 };
 use crate::sync::{SimulationState, Synchronizer};
 use crate::time::SimulationTime;
@@ -30,6 +31,7 @@ pub struct SimulationBuilder<M: Component + Clone> {
     marker: PhantomData<M>,
     startup_schedule_builder: ScheduleBuilder,
     system_schedule_builder: ScheduleBuilder,
+    visualization_schedule_builder: ScheduleBuilder,
     plugins: Vec<SimulationPluginFactory>,
 }
 
@@ -52,6 +54,7 @@ impl<M: Component + Clone> SimulationBuilder<M> {
             startup_schedule_builder: ScheduleBuilder::new(SimulationStartup),
             system_schedule_builder: ScheduleBuilder::new(SimulationSystemExec)
                 .set_ordering(SystemExecutionOrdering::Total),
+            visualization_schedule_builder: ScheduleBuilder::new(SimulationVisualize),
             plugins: Vec::new(),
             marker: PhantomData,
         }
@@ -96,6 +99,16 @@ impl<M: Component + Clone> SimulationBuilder<M> {
         self
     }
 
+    /// Adds a set of systems to be run in the main world, while this simulation is being played back.
+    pub fn add_visualization_systems<S>(
+        mut self,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, S>,
+    ) -> Self {
+        self.visualization_schedule_builder =
+            self.visualization_schedule_builder.add_systems(systems);
+        self
+    }
+
     /// Builds a new [`Simulation`].
     pub fn build(self, world: &World) -> Simulation {
         Simulation::new(self, world)
@@ -110,6 +123,7 @@ pub struct Simulation {
     simulation_steps: BTreeMap<SimulationTime, SimulationStep>,
     state: SimulationComputeState,
     update_receiver: Receiver<SimulationComputeUpdate>,
+    visualization_schedule: Schedule,
 }
 
 impl Simulation {
@@ -131,6 +145,7 @@ impl Simulation {
             simulation_steps: BTreeMap::new(),
             state: SimulationComputeState::Computing,
             update_receiver: receiver,
+            visualization_schedule: builder.visualization_schedule_builder.build(),
         }
     }
 
@@ -144,6 +159,10 @@ impl Simulation {
 
     pub fn synchronizer(&self) -> &Synchronizer {
         &self.synchronizer
+    }
+
+    pub fn run_visualization_schedule(&mut self, world: &mut World) {
+        self.visualization_schedule.run(world);
     }
 
     // TODO: Should this provide an iterator instead?

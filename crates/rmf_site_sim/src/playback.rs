@@ -14,7 +14,15 @@ impl Plugin for SimulationPlaybackPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<SimulationPlaybackCommand>()
             .init_resource::<SimulationPlayback>()
-            .add_systems(Update, (process_commands, execute_playback).chain());
+            .add_systems(
+                Update,
+                (
+                    process_commands,
+                    execute_playback,
+                    run_active_visualization_schedule,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -104,6 +112,11 @@ impl SimulationPlayback {
 
     pub fn time(&self) -> Option<SimulationTime> {
         self.0.as_ref().map(|active| active.time)
+    }
+
+    /// The entity of the currently active simulation, if any.
+    pub fn active_simulation(&self) -> Option<Entity> {
+        self.0.as_ref().map(|active| active.simulation)
     }
 
     fn set_active_simulation(&mut self, world: &mut World, simulation: Option<Entity>) {
@@ -383,4 +396,17 @@ fn execute_playback(world: &mut World) {
             }
         }
     });
+}
+
+fn run_active_visualization_schedule(world: &mut World) {
+    let Some(simulation) = world.resource::<SimulationPlayback>().active_simulation() else {
+        return;
+    };
+
+    let mut sim = world
+        .entity_mut(simulation)
+        .take::<Simulation>()
+        .expect("Active simulation entity has no Simulation component");
+    sim.run_visualization_schedule(world);
+    world.entity_mut(simulation).insert(sim);
 }
