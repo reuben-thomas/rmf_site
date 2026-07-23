@@ -14,7 +14,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 pub struct SimulationStartup;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
-pub struct SimulationModelSystemExec;
+pub struct SimulationSystemExec;
 
 #[derive(Default, Clone)]
 pub enum SystemExecutionOrdering {

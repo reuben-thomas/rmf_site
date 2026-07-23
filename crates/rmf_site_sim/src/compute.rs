@@ -1,9 +1,9 @@
-use crate::event::{DiscreteEvents, execute_first_instant_event, execute_scheduled_events};
-use crate::schedule::{SimulationModelSystemExec, SimulationStartup};
+use crate::event::CandidateDiscreteEvents;
+use crate::schedule::{SimulationStartup, SimulationSystemExec};
 use crate::simulation::{
-    SimulationComputeUpdate, SimulationPluginFactory, SimulationState, SimulationStep,
+    SimulationComputeState, SimulationComputeUpdate, SimulationPluginFactory, SimulationState,
 };
-use crate::sync::{SimulationEventBuffer, StateUpdateSender};
+use crate::sync::{SimulationEventBuffer, StateUpdateSender, Synchronizer};
 use crate::time::SimulationTime;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, TaskPool};
@@ -11,80 +11,79 @@ use crossbeam_channel::Sender;
 use std::collections::BTreeSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-/// Computes [`SimulationStep`]s for a simulation in a [`AsyncComputeTaskPool`].
+/// Computes [`SimulationStep`](crate::simulation::SimulationStep)s for a simulation in a
+/// [`AsyncComputeTaskPool`].
 pub fn compute_async(
-    update_sender: Sender<SimulationComputeUpdate>,
+    init_state: SimulationState,
     startup_schedule: Schedule,
     system_schedule: Schedule,
-    init_entities: Vec<Entity>,
-    init_step: SimulationStep,
     plugins: Vec<SimulationPluginFactory>,
+    synchronizer: Synchronizer,
+    sender: Sender<SimulationComputeUpdate>,
 ) {
-    let completion_sender = update_sender.clone();
+    let completion_sender = sender.clone();
     AsyncComputeTaskPool::get_or_init(TaskPool::new)
         .spawn(async move {
             let result = catch_unwind(AssertUnwindSafe(move || {
                 let mut app = build_app(
-                    update_sender,
+                    init_state,
                     startup_schedule,
                     system_schedule,
-                    init_entities,
-                    init_step,
                     plugins,
+                    synchronizer,
+                    sender,
                 );
                 app.run();
             }));
             let state = match result {
-                Ok(()) => SimulationState::Complete,
-                Err(_) => SimulationState::Failed,
+                Ok(()) => SimulationComputeState::Complete,
+                Err(_) => SimulationComputeState::Failed,
             };
             let _ = completion_sender.send(SimulationComputeUpdate::State(state));
         })
         .detach();
 }
 
+/// Builds an [`App`] with the initial state, plugins, schedules, and sets [`compute_simulation`]
+/// as the runner.
 fn build_app(
-    update_sender: Sender<SimulationComputeUpdate>,
+    init_state: SimulationState,
     startup_schedule: Schedule,
     system_schedule: Schedule,
-    init_entities: Vec<Entity>,
-    init_step: SimulationStep,
     plugins: Vec<SimulationPluginFactory>,
+    synchronizer: Synchronizer,
+    sender: Sender<SimulationComputeUpdate>,
 ) -> App {
     let mut app = App::new();
     app.add_schedule(startup_schedule);
     app.add_schedule(system_schedule);
     app.init_resource::<SimulationComputeClock>()
-        .init_resource::<DiscreteEvents>()
+        .init_resource::<CandidateDiscreteEvents>()
         .init_resource::<SimulationEventBuffer>()
-        .insert_resource(StateUpdateSender::new(update_sender));
+        .insert_resource(StateUpdateSender::new(sender));
     app.set_runner(compute_simulation);
-    init_world(app.world_mut(), init_entities, init_step);
+    synchronizer.sync(&init_state.0, app.world_mut());
     for plugin in plugins {
         plugin(&mut app);
     }
     app
 }
-
-fn init_world(world: &mut World, init_entities: Vec<Entity>, init_step: SimulationStep) {
-    for entity in init_entities {
-        spawn_at(world, entity);
-    }
-    init_step.apply(world);
-}
-
+/// A runner to compute and send one [`crate::simulation::SimulationStep`] at a time to the main app.
 fn compute_simulation(mut app: App) -> AppExit {
     let world = app.world_mut();
     world.run_schedule(SimulationStartup);
     loop {
         compute_time_step(world);
         let _ = world.run_system_cached(SimulationEventBuffer::send_step);
-        let _ = world.run_system_cached(sync_with_clock);
+        let _ = world.run_system_cached(CandidateDiscreteEvents::update_clock_with_pending_time);
         let _ = world.run_system_cached(SimulationComputeClock::advance);
 
-        // TODO: This should be a generic trait with a builtin impl,
-        // e.g. crate::simulation::EndCondition
-        if world.resource::<SimulationComputeClock>().is_complete() {
+        // TODO:
+        // Configurable end conditions could include:
+        // - A maximum number of steps:
+        // - A generic user implemented trait e.g. `crate::simulation::EndCondition`
+        // - A user system that sends an event
+        if world.resource::<SimulationComputeClock>().at_end {
             break;
         }
     }
@@ -92,18 +91,16 @@ fn compute_simulation(mut app: App) -> AppExit {
 }
 
 fn compute_time_step(world: &mut World) {
-    execute_scheduled_events(world);
+    let _ =
+        world.run_system_cached(CandidateDiscreteEvents::execute_highest_priority_current_event);
     loop {
-        world.run_schedule(SimulationModelSystemExec);
-        if !execute_first_instant_event(world) {
+        world.run_schedule(SimulationSystemExec);
+        let executed = world
+            .run_system_cached(CandidateDiscreteEvents::execute_highest_priority_current_event)
+            .unwrap();
+        if !executed {
             break;
         }
-    }
-}
-
-pub fn sync_with_clock(events: Res<DiscreteEvents>, mut clock: ResMut<SimulationComputeClock>) {
-    if let Some(time) = events.next_time() {
-        clock.insert_pending(time);
     }
 }
 
@@ -112,7 +109,7 @@ pub fn sync_with_clock(events: Res<DiscreteEvents>, mut clock: ResMut<Simulation
 pub struct SimulationComputeClock {
     current: SimulationTime,
     pending: BTreeSet<SimulationTime>,
-    is_complete: bool,
+    at_end: bool,
 }
 
 impl SimulationComputeClock {
@@ -134,35 +131,18 @@ impl SimulationComputeClock {
         self.pending.insert(time)
     }
 
-    /// Whether all pending times have been processed.
-    fn is_complete(&self) -> bool {
-        self.is_complete
-    }
-
-    /// Ticks the clock to the next pending time.
-    fn tick(&mut self) {
-        let time = self
-            .pending
-            .pop_first()
-            .expect("No pending times to increment");
-        self.current = time;
-    }
-
     /// System to advance the compute clock to the next pending time, if one exists.
-    pub fn advance(mut clock: ResMut<SimulationComputeClock>) {
-        if clock.pending.is_empty() {
-            debug!("Compute clock reached end at time {:?}", clock.now());
-            clock.is_complete = true;
+    fn advance(mut clock: ResMut<SimulationComputeClock>) {
+        if clock.at_end {
             return;
         }
 
-        clock.tick();
+        match clock.pending.pop_first() {
+            Some(time) => clock.current = time,
+            None => {
+                clock.at_end = true;
+                debug!("Compute clock reached end at time {:?}", clock.now());
+            }
+        }
     }
-}
-
-// TODO: This method is only in newer versions of Bevy, this is a workaround.
-// https://docs.rs/bevy/latest/bevy/prelude/struct.World.html#method.spawn_at
-pub fn spawn_at(world: &mut World, entity: Entity) {
-    #[allow(deprecated)]
-    let _ = world.insert_or_spawn_batch([(entity, ())]);
 }

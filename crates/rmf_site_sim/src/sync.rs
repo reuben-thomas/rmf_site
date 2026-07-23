@@ -1,192 +1,146 @@
 use crate::compute::SimulationComputeClock;
 use crate::event::DiscreteEvent;
-use crate::simulation::{SimulationComputeUpdate, SimulationStep};
+use crate::simulation::{SimulationComputeUpdate, SimulationState, SimulationStep};
 use crate::time::SimulationTime;
-use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
-use bevy::ecs::system::Command;
+use bevy::ecs::entity::EntityHashSet;
 use bevy::prelude::*;
-use bevy::utils::synccell::SyncCell;
 use crossbeam_channel::Sender;
 use std::any::TypeId;
-use std::collections::HashSet;
-use std::marker::PhantomData;
 
-/// Extracts entities, components, and resources from the main world into the simulation world.
-///
-/// Only entities with the marker component `M` are extracted.
-pub struct Extractor<M: Component> {
-    component_extractors: Vec<ComponentExtractor>,
-    resource_extractors: Vec<ResourceExtractor>,
-    registered_component_type_ids: HashSet<TypeId>,
-    registered_resource_type_ids: HashSet<TypeId>,
-    marker: PhantomData<M>,
+/// Synchronizes entities, components, and resources from a source world into a target world.
+#[derive(Clone)]
+pub struct Synchronizer {
+    component_synchronizers: Vec<ComponentSynchronizer>,
+    resource_synchronizers: Vec<ResourceSynchronizer>,
 }
 
-impl<M: Component> Default for Extractor<M> {
-    fn default() -> Self {
+impl Synchronizer {
+    pub fn new<M: Component + Clone>() -> Self {
         Self {
-            component_extractors: Vec::new(),
-            resource_extractors: Vec::new(),
-            registered_component_type_ids: HashSet::new(),
-            registered_resource_type_ids: HashSet::new(),
-            marker: PhantomData,
+            component_synchronizers: vec![ComponentSynchronizer::new::<M, M>()],
+            resource_synchronizers: Vec::new(),
         }
     }
-}
 
-impl<M: Component> Clone for Extractor<M> {
-    fn clone(&self) -> Self {
-        Self {
-            component_extractors: self.component_extractors.clone(),
-            resource_extractors: self.resource_extractors.clone(),
-            registered_component_type_ids: self.registered_component_type_ids.clone(),
-            registered_resource_type_ids: self.registered_resource_type_ids.clone(),
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<M: Component> Extractor<M> {
-    /// Registers a component to extract.
-    pub fn register_component<T: Component + Clone>(&mut self) {
-        if !self.registered_component_type_ids.insert(TypeId::of::<T>()) {
+    pub fn register_component<T: Component + Clone, M: Component>(&mut self) {
+        let type_id = TypeId::of::<T>();
+        if self
+            .component_synchronizers
+            .iter()
+            .any(|s| s.type_id == type_id)
+        {
             warn!(
-                "Component {} is already registered for extraction.",
+                "Component {} is already registered for synchronization.",
                 std::any::type_name::<T>()
             );
             return;
         }
 
-        self.component_extractors
-            .push(ComponentExtractor::new::<T, M>());
+        self.component_synchronizers
+            .push(ComponentSynchronizer::new::<T, M>());
     }
 
-    /// Registers a resource to extract.
+    /// Registers a resource to synchronize.
     pub fn register_resource<T: Resource + Clone>(&mut self) {
-        if !self.registered_resource_type_ids.insert(TypeId::of::<T>()) {
+        let type_id = TypeId::of::<T>();
+        if self
+            .resource_synchronizers
+            .iter()
+            .any(|s| s.type_id == type_id)
+        {
             warn!(
-                "Resource {} is already registered for extraction.",
+                "Resource {} is already registered for synchronization.",
                 std::any::type_name::<T>()
             );
             return;
         }
 
-        self.resource_extractors.push(ResourceExtractor::new::<T>());
+        self.resource_synchronizers
+            .push(ResourceSynchronizer::new::<T>());
     }
 
-    /// Extracts all marked entities with at least one registered component.
-    pub fn extract_entities(&self, world: &World) -> Vec<Entity> {
+    fn synchronized_entities(&self, source: &World) -> Vec<Entity> {
         let mut entities = EntityHashSet::default();
-        for extractor in &self.component_extractors {
-            (extractor.extract_entities)(world, &mut entities);
+        for synchronizer in &self.component_synchronizers {
+            (synchronizer.sync_entities)(source, &mut entities);
         }
         entities.into_iter().collect()
     }
 
-    /// Creates the events that capture the extracted component and resource states.
-    pub fn create_extract_events(&self, world: &World) -> Vec<Box<dyn DiscreteEvent>> {
-        self.extract_components(world)
-            .chain(self.extract_resources(world))
-            .collect()
+    pub fn sync(&self, source: &World, target: &mut World) {
+        for entity in self.synchronized_entities(source) {
+            spawn_at(target, entity);
+        }
+        for synchronizer in &self.component_synchronizers {
+            (synchronizer.sync_components)(source, target);
+        }
+        for synchronizer in &self.resource_synchronizers {
+            (synchronizer.sync_resource)(source, target);
+        }
     }
 
-    /// Extracts all components that should be synchronized.
-    fn extract_components<'a>(
-        &'a self,
-        world: &'a World,
-    ) -> impl Iterator<Item = Box<dyn DiscreteEvent>> + 'a {
-        self.component_extractors
-            .iter()
-            .map(move |extractor| (extractor.extract_components)(world))
-    }
-
-    /// Extracts all resources that should be synchronized.
-    fn extract_resources<'a>(
-        &'a self,
-        world: &'a World,
-    ) -> impl Iterator<Item = Box<dyn DiscreteEvent>> + 'a {
-        self.resource_extractors
-            .iter()
-            .filter_map(move |extractor| (extractor.extract_resource)(world))
+    pub fn create_state(&self, source: &World) -> SimulationState {
+        let mut state = World::new();
+        self.sync(source, &mut state);
+        SimulationState(state)
     }
 }
 
-/// An extractor for a single component type.
+/// Synchronizes a single component type.
 #[derive(Clone, Copy)]
-struct ComponentExtractor {
-    extract_entities: fn(&World, &mut EntityHashSet),
-    extract_components: fn(&World) -> Box<dyn DiscreteEvent>,
+struct ComponentSynchronizer {
+    type_id: TypeId,
+    sync_entities: fn(&World, &mut EntityHashSet),
+    sync_components: fn(&World, &mut World),
 }
 
-impl ComponentExtractor {
+impl ComponentSynchronizer {
     fn new<T: Component + Clone, M: Component>() -> Self {
         Self {
-            extract_entities: Self::extract_entities::<T, M>,
-            extract_components: Self::extract_components::<T, M>,
+            type_id: TypeId::of::<T>(),
+            sync_entities: Self::sync_entities::<T, M>,
+            sync_components: Self::sync_components::<T, M>,
         }
     }
 
-    fn extract_entities<T: Component, M: Component>(world: &World, entities: &mut EntityHashSet) {
-        let Some(mut query) = world.try_query_filtered::<Entity, (With<T>, With<M>)>() else {
+    fn sync_entities<T: Component, M: Component>(source: &World, entities: &mut EntityHashSet) {
+        let Some(mut query) = source.try_query_filtered::<Entity, (With<T>, With<M>)>() else {
             return;
         };
-        entities.extend(query.iter(world));
+        entities.extend(query.iter(source));
     }
 
-    fn extract_components<T: Component + Clone, M: Component>(
-        world: &World,
-    ) -> Box<dyn DiscreteEvent> {
-        let components = world
-            .try_query_filtered::<(Entity, &T), With<M>>()
-            .map(|mut query| {
-                query
-                    .iter(world)
-                    .map(|(entity, component)| (entity, component.clone()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        Box::new(ExtractComponents::<T>(components))
-    }
-}
-
-/// An extractor for a single resource type.
-#[derive(Clone, Copy)]
-struct ResourceExtractor {
-    extract_resource: fn(&World) -> Option<Box<dyn DiscreteEvent>>,
-}
-
-impl ResourceExtractor {
-    fn new<T: Resource + Clone>() -> Self {
-        Self {
-            extract_resource: Self::extract_resource::<T>,
-        }
-    }
-
-    fn extract_resource<T: Resource + Clone>(world: &World) -> Option<Box<dyn DiscreteEvent>> {
-        let value = world.get_resource::<T>()?.clone();
-        Some(Box::new(ExtractResource(value)))
-    }
-}
-
-#[derive(Clone)]
-pub struct ExtractComponents<T: Component>(pub EntityHashMap<T>);
-
-impl<T: Component + Clone> Command for ExtractComponents<T> {
-    fn apply(self, world: &mut World) {
-        for (entity, value) in self.0 {
-            if let Ok(mut e) = world.get_entity_mut(entity) {
-                e.insert(value);
+    fn sync_components<T: Component + Clone, M: Component>(source: &World, target: &mut World) {
+        let Some(mut query) = source.try_query_filtered::<(Entity, &T), With<M>>() else {
+            return;
+        };
+        for (entity, component) in query.iter(source) {
+            if let Ok(mut e) = target.get_entity_mut(entity) {
+                e.insert(component.clone());
             }
         }
     }
 }
 
-#[derive(Clone)]
-pub struct ExtractResource<T: Resource>(pub T);
+/// Synchronizes a single resource type.
+#[derive(Clone, Copy)]
+struct ResourceSynchronizer {
+    type_id: TypeId,
+    sync_resource: fn(&World, &mut World),
+}
 
-impl<T: Resource + Clone> Command for ExtractResource<T> {
-    fn apply(self, world: &mut World) {
-        world.insert_resource(self.0);
+impl ResourceSynchronizer {
+    fn new<T: Resource + Clone>() -> Self {
+        Self {
+            type_id: TypeId::of::<T>(),
+            sync_resource: Self::sync_resource::<T>,
+        }
+    }
+
+    fn sync_resource<T: Resource + Clone>(source: &World, target: &mut World) {
+        if let Some(value) = source.get_resource::<T>() {
+            target.insert_resource(value.clone());
+        }
     }
 }
 
@@ -205,22 +159,16 @@ impl StateUpdateSender {
 
 /// A buffer to store the [`DiscreteEvent`]s executed in the current step,
 /// sent to the main world as a single [`SimulationStep`].
-#[derive(Resource)]
-pub struct SimulationEventBuffer(SyncCell<Vec<Box<dyn DiscreteEvent>>>);
-
-impl Default for SimulationEventBuffer {
-    fn default() -> Self {
-        Self(SyncCell::new(Vec::new()))
-    }
-}
+#[derive(Resource, Default)]
+pub struct SimulationEventBuffer(Vec<Box<dyn DiscreteEvent>>);
 
 impl SimulationEventBuffer {
     pub(crate) fn extend(&mut self, events: impl IntoIterator<Item = Box<dyn DiscreteEvent>>) {
-        self.0.get().extend(events);
+        self.0.extend(events);
     }
 
     fn take(&mut self) -> Vec<Box<dyn DiscreteEvent>> {
-        std::mem::take(self.0.get())
+        std::mem::take(&mut self.0)
     }
 
     pub(crate) fn send_step(
@@ -240,7 +188,6 @@ impl SimulationEventBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::spawn_at;
 
     #[derive(Component, Clone)]
     struct Marker;
@@ -249,39 +196,33 @@ mod tests {
     struct Value(u32);
 
     #[test]
-    fn test_marker_component_filters_extraction() {
-        let mut world = World::new();
-        let marked = world.spawn((Marker, Value(1))).id();
-        let unmarked = world.spawn(Value(2)).id();
+    fn test_marker_component_filters_synchronization() {
+        let mut source = World::new();
+        let marked = source.spawn((Marker, Value(1))).id();
+        let unmarked = source.spawn(Value(2)).id();
 
-        let mut extractor = Extractor::<Marker>::default();
-        extractor.register_component::<Value>();
+        let mut synchronizer = Synchronizer::new::<Marker>();
+        synchronizer.register_component::<Value, Marker>();
 
-        // Create a simulation world with the extracted entities and components.
-        let mut sim_world = World::new();
-        let extract_entities = extractor.extract_entities(&world);
-        for entity in extract_entities.clone() {
-            spawn_at(&mut sim_world, entity);
-        }
-        let extract_events = extractor.create_extract_events(&world);
-        for event in extract_events {
-            event.apply(&mut sim_world);
-        }
+        let source_entities = synchronizer.synchronized_entities(&source);
+
+        let mut target = World::new();
+        synchronizer.sync(&source, &mut target);
 
         assert_eq!(
-            extract_entities,
+            source_entities,
             vec![marked],
-            "Only the entity with the marker component should be extracted."
+            "Only the entity with the marker component should be synchronized."
         );
         assert_eq!(
-            sim_world.get::<Value>(marked),
+            target.get::<Value>(marked),
             Some(&Value(1)),
-            "Marked entity should be extracted with its Value component."
+            "Marked entity should be synchronized with its Value component."
         );
         assert_eq!(
-            sim_world.get::<Value>(unmarked),
+            target.get::<Value>(unmarked),
             None,
-            "Unmarked entity should not be extracted."
+            "Unmarked entity should not be synchronized."
         );
     }
 
@@ -290,13 +231,40 @@ mod tests {
         #[derive(Resource, Clone)]
         struct Config;
 
-        let mut extractor = Extractor::<Marker>::default();
+        let mut synchronizer = Synchronizer::new::<Marker>();
         for _ in 0..2 {
-            extractor.register_component::<Value>();
-            extractor.register_resource::<Config>();
+            synchronizer.register_component::<Value, Marker>();
+            synchronizer.register_resource::<Config>();
         }
 
-        assert_eq!(extractor.component_extractors.len(), 1);
-        assert_eq!(extractor.resource_extractors.len(), 1);
+        assert_eq!(
+            synchronizer.component_synchronizers.len(),
+            2,
+            "The marker component itself is auto-registered, plus Value."
+        );
+        assert_eq!(synchronizer.resource_synchronizers.len(), 1);
     }
+
+    #[test]
+    fn test_synchronization_round_trip() {
+        let mut source = World::new();
+        let marked = source.spawn((Marker, Value(1))).id();
+
+        let mut synchronizer = Synchronizer::new::<Marker>();
+        synchronizer.register_component::<Value, Marker>();
+
+        let state = synchronizer.create_state(&source);
+
+        let mut target = World::new();
+        synchronizer.sync(&state.0, &mut target);
+
+        assert_eq!(target.get::<Value>(marked), Some(&Value(1)),);
+    }
+}
+
+// TODO: This method is only in newer versions of Bevy, this is a workaround.
+// https://docs.rs/bevy/latest/bevy/prelude/struct.World.html#method.spawn_at
+pub fn spawn_at(world: &mut World, entity: Entity) {
+    #[allow(deprecated)]
+    let _ = world.insert_or_spawn_batch([(entity, ())]);
 }

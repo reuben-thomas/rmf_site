@@ -1,6 +1,6 @@
 //! Playback of computed [`Simulation`] steps in the main world.
 
-use crate::simulation::{Simulation, SimulationState};
+use crate::simulation::{Simulation, SimulationComputeState, SimulationState};
 use crate::time::SimulationTime;
 use bevy::ecs::event::EventCursor;
 use bevy::prelude::*;
@@ -102,20 +102,20 @@ impl SimulationPlayback {
     }
 
     fn set_active_simulation(&mut self, world: &mut World, simulation: Option<Entity>) {
-        if let Some(_existing_simulation) = self.0.as_ref() {
-            todo!("Handle cleanup of simulation artefacts");
+        if let Some(existing) = self.0.take() {
+            existing.deactivate(world);
         }
 
-        self.0 = simulation.map(SimulationActivePlayback::new);
-        if let Some(active) = self.0.as_mut() {
-            active.reset(world);
-        }
+        self.0 = simulation.map(|entity| SimulationActivePlayback::activate(world, entity));
     }
 }
 
 struct SimulationActivePlayback {
     /// The entity associated with the selected [`Simulation`] for playback.
     simulation: Entity,
+    /// A snapshot of the world's state before this playback, to restore the state of the main world upon terminating
+    /// this playback.
+    pre_simulation_state: SimulationState,
     /// The state of playback.
     state: SimulationPlaybackState,
     /// The current time in the Simulation.
@@ -130,20 +130,40 @@ struct SimulationActivePlayback {
 }
 
 impl SimulationActivePlayback {
-    fn new(simulation: Entity) -> Self {
-        Self {
+    fn activate(world: &mut World, simulation: Entity) -> Self {
+        let sim = world
+            .get::<Simulation>(simulation)
+            .expect("Active simulation entity has no Simulation component");
+        let pre_simulation_state = sim.synchronizer().create_state(world);
+
+        let mut active = Self {
             simulation,
+            pre_simulation_state,
             state: SimulationPlaybackState::default(),
             time: SimulationTime::default(),
             applied_steps: 0,
             end_behaviour: SimulationPlaybackEndBehaviour::default(),
-        }
+        };
+        active.reset(world);
+        active
     }
 
-    /// Reset playback to initial state.
+    fn deactivate(self, world: &mut World) {
+        let synchronizer = world
+            .get::<Simulation>(self.simulation)
+            .expect("Active simulation entity has no Simulation component")
+            .synchronizer()
+            .clone();
+        synchronizer.sync(&self.pre_simulation_state.0, world);
+    }
+
     fn reset(&mut self, world: &mut World) {
-        let simulation = self.simulation_mut(world);
-        simulation.init_step().clone().apply(world);
+        let sim = world
+            .entity_mut(self.simulation)
+            .take::<Simulation>()
+            .expect("Active simulation entity has no Simulation component");
+        sim.synchronizer().sync(&sim.init_state().0, world);
+        world.entity_mut(self.simulation).insert(sim);
         self.time = SimulationTime::from(Duration::ZERO);
         self.applied_steps = 0;
     }
@@ -249,7 +269,7 @@ impl SimulationActivePlayback {
         let simulation = self.simulation_mut(world);
         matches!(
             simulation.state(),
-            SimulationState::Complete | SimulationState::Failed
+            SimulationComputeState::Complete | SimulationComputeState::Failed
         ) && self.applied_steps >= simulation.steps().len()
     }
 
