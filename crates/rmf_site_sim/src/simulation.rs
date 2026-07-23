@@ -3,7 +3,7 @@ use crate::event::DiscreteEvent;
 use crate::schedule::{
     ScheduleBuilder, SimulationStartup, SimulationSystemExec, SystemExecutionOrdering,
 };
-use crate::sync::Synchronizer;
+use crate::sync::{SimulationState, Synchronizer};
 use crate::time::SimulationTime;
 use bevy::app::Plugins;
 use bevy::ecs::system::ScheduleSystem;
@@ -45,8 +45,10 @@ impl<M: Component + Clone> Default for SimulationBuilder<M> {
 /// marker component `M` are extracted into the simulation world.
 impl<M: Component + Clone> SimulationBuilder<M> {
     pub fn new() -> Self {
+        let mut synchronizer = Synchronizer::new();
+        synchronizer.register_component::<M>();
         Self {
-            synchronizer: Synchronizer::new::<M>(),
+            synchronizer,
             startup_schedule_builder: ScheduleBuilder::new(SimulationStartup),
             system_schedule_builder: ScheduleBuilder::new(SimulationSystemExec)
                 .set_ordering(SystemExecutionOrdering::Total),
@@ -57,7 +59,7 @@ impl<M: Component + Clone> SimulationBuilder<M> {
 
     /// Registers a component to synchronize into the simulation world.
     pub fn register_component<T: Component + Clone>(mut self) -> Self {
-        self.synchronizer.register_component::<T, M>();
+        self.synchronizer.register_component::<T>();
         self
     }
 
@@ -115,7 +117,7 @@ impl Simulation {
     fn new<M: Component + Clone>(builder: SimulationBuilder<M>, world: &World) -> Self {
         let (sender, receiver) = unbounded();
         compute_async(
-            builder.synchronizer.create_state(world),
+            SimulationState::extract_with::<M>(&builder.synchronizer, world),
             builder.startup_schedule_builder.build(),
             builder.system_schedule_builder.build(),
             builder.plugins,
@@ -124,7 +126,7 @@ impl Simulation {
         );
 
         Self {
-            init_state: builder.synchronizer.create_state(world),
+            init_state: SimulationState::extract_with::<M>(&builder.synchronizer, world),
             synchronizer: builder.synchronizer,
             simulation_steps: BTreeMap::new(),
             state: SimulationComputeState::Computing,
@@ -176,8 +178,6 @@ pub enum SimulationComputeState {
     Complete,
     Failed,
 }
-
-pub struct SimulationState(pub World);
 
 /// A single computed simulation step.
 #[derive(Clone)]

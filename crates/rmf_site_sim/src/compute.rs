@@ -1,9 +1,7 @@
 use crate::event::CandidateDiscreteEvents;
 use crate::schedule::{SimulationStartup, SimulationSystemExec};
-use crate::simulation::{
-    SimulationComputeState, SimulationComputeUpdate, SimulationPluginFactory, SimulationState,
-};
-use crate::sync::{SimulationEventBuffer, StateUpdateSender, Synchronizer};
+use crate::simulation::{SimulationComputeState, SimulationComputeUpdate, SimulationPluginFactory};
+use crate::sync::{SimulationEventBuffer, SimulationState, StateUpdateSender, Synchronizer};
 use crate::time::SimulationTime;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, TaskPool};

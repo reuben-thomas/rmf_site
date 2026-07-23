@@ -1,139 +1,93 @@
 use crate::compute::SimulationComputeClock;
 use crate::event::DiscreteEvent;
-use crate::simulation::{SimulationComputeUpdate, SimulationState, SimulationStep};
+use crate::simulation::{SimulationComputeUpdate, SimulationStep};
 use crate::time::SimulationTime;
-use bevy::ecs::entity::EntityHashSet;
+use bevy::ecs::component::ComponentId;
 use bevy::prelude::*;
+use bevy::utils::TypeIdMap;
 use crossbeam_channel::Sender;
 use std::any::TypeId;
 
 /// Synchronizes entities, components, and resources from a source world into a target world.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Synchronizer {
-    component_synchronizers: Vec<ComponentSynchronizer>,
-    resource_synchronizers: Vec<ResourceSynchronizer>,
+    component_synchronizers: TypeIdMap<fn(&World, &mut World, Option<ComponentId>)>,
+    resource_synchronizers: TypeIdMap<fn(&World, &mut World)>,
 }
 
 impl Synchronizer {
-    pub fn new<M: Component + Clone>() -> Self {
-        Self {
-            component_synchronizers: vec![ComponentSynchronizer::new::<M, M>()],
-            resource_synchronizers: Vec::new(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    pub fn register_component<T: Component + Clone, M: Component>(&mut self) {
-        let type_id = TypeId::of::<T>();
+    pub fn register_component<T: Component + Clone>(&mut self) {
         if self
             .component_synchronizers
-            .iter()
-            .any(|s| s.type_id == type_id)
+            .insert(TypeId::of::<T>(), Self::sync_components::<T>)
+            .is_some()
         {
             warn!(
                 "Component {} is already registered for synchronization.",
                 std::any::type_name::<T>()
             );
-            return;
         }
-
-        self.component_synchronizers
-            .push(ComponentSynchronizer::new::<T, M>());
     }
 
     /// Registers a resource to synchronize.
     pub fn register_resource<T: Resource + Clone>(&mut self) {
-        let type_id = TypeId::of::<T>();
         if self
             .resource_synchronizers
-            .iter()
-            .any(|s| s.type_id == type_id)
+            .insert(TypeId::of::<T>(), Self::sync_resource::<T>)
+            .is_some()
         {
             warn!(
                 "Resource {} is already registered for synchronization.",
                 std::any::type_name::<T>()
             );
-            return;
         }
-
-        self.resource_synchronizers
-            .push(ResourceSynchronizer::new::<T>());
     }
 
-    fn synchronized_entities(&self, source: &World) -> Vec<Entity> {
-        let mut entities = EntityHashSet::default();
-        for synchronizer in &self.component_synchronizers {
-            (synchronizer.sync_entities)(source, &mut entities);
-        }
-        entities.into_iter().collect()
-    }
-
+    /// Synchronizes all entities that have at least one registered component.
     pub fn sync(&self, source: &World, target: &mut World) {
-        for entity in self.synchronized_entities(source) {
-            spawn_at(target, entity);
-        }
-        for synchronizer in &self.component_synchronizers {
-            (synchronizer.sync_components)(source, target);
-        }
-        for synchronizer in &self.resource_synchronizers {
-            (synchronizer.sync_resource)(source, target);
-        }
+        self.sync_components_resources(source, target, None);
     }
 
-    pub fn create_state(&self, source: &World) -> SimulationState {
-        let mut state = World::new();
-        self.sync(source, &mut state);
-        SimulationState(state)
-    }
-}
-
-/// Synchronizes a single component type.
-#[derive(Clone, Copy)]
-struct ComponentSynchronizer {
-    type_id: TypeId,
-    sync_entities: fn(&World, &mut EntityHashSet),
-    sync_components: fn(&World, &mut World),
-}
-
-impl ComponentSynchronizer {
-    fn new<T: Component + Clone, M: Component>() -> Self {
-        Self {
-            type_id: TypeId::of::<T>(),
-            sync_entities: Self::sync_entities::<T, M>,
-            sync_components: Self::sync_components::<T, M>,
-        }
-    }
-
-    fn sync_entities<T: Component, M: Component>(source: &World, entities: &mut EntityHashSet) {
-        let Some(mut query) = source.try_query_filtered::<Entity, (With<T>, With<M>)>() else {
+    /// Synchronizes all entities that have the marker component `M`.
+    pub fn sync_with<M: Component>(&self, source: &World, target: &mut World) {
+        let Some(marker_id) = source.components().get_id(TypeId::of::<M>()) else {
             return;
         };
-        entities.extend(query.iter(source));
+        self.sync_components_resources(source, target, Some(marker_id));
     }
 
-    fn sync_components<T: Component + Clone, M: Component>(source: &World, target: &mut World) {
-        let Some(mut query) = source.try_query_filtered::<(Entity, &T), With<M>>() else {
+    fn sync_components_resources(
+        &self,
+        source: &World,
+        target: &mut World,
+        marker: Option<ComponentId>,
+    ) {
+        for sync in self.component_synchronizers.values() {
+            sync(source, target, marker);
+        }
+        for sync in self.resource_synchronizers.values() {
+            sync(source, target);
+        }
+    }
+
+    fn sync_components<T: Component + Clone>(
+        source: &World,
+        target: &mut World,
+        marker: Option<ComponentId>,
+    ) {
+        let Some(mut query) = source.try_query::<(Entity, &T)>() else {
             return;
         };
         for (entity, component) in query.iter(source) {
-            if let Ok(mut e) = target.get_entity_mut(entity) {
-                e.insert(component.clone());
+            // Entities from the query are alive in `source`, so `entity()` cannot panic.
+            if marker.is_none_or(|id| source.entity(entity).contains_id(id)) {
+                spawn_at(target, entity);
+                target.entity_mut(entity).insert(component.clone());
             }
-        }
-    }
-}
-
-/// Synchronizes a single resource type.
-#[derive(Clone, Copy)]
-struct ResourceSynchronizer {
-    type_id: TypeId,
-    sync_resource: fn(&World, &mut World),
-}
-
-impl ResourceSynchronizer {
-    fn new<T: Resource + Clone>() -> Self {
-        Self {
-            type_id: TypeId::of::<T>(),
-            sync_resource: Self::sync_resource::<T>,
         }
     }
 
@@ -141,6 +95,25 @@ impl ResourceSynchronizer {
         if let Some(value) = source.get_resource::<T>() {
             target.insert_resource(value.clone());
         }
+    }
+}
+
+/// A snapshot of a world's synchronized entities, components, and resources.
+pub struct SimulationState(pub World);
+
+impl SimulationState {
+    /// Extracts a state containing all entities with registered components.
+    pub fn extract(synchronizer: &Synchronizer, source: &World) -> Self {
+        let mut world = World::new();
+        synchronizer.sync(source, &mut world);
+        Self(world)
+    }
+
+    /// Extracts a state containing only entities with the marker component `M`.
+    pub fn extract_with<M: Component>(synchronizer: &Synchronizer, source: &World) -> Self {
+        let mut world = World::new();
+        synchronizer.sync_with::<M>(source, &mut world);
+        Self(world)
     }
 }
 
@@ -185,6 +158,13 @@ impl SimulationEventBuffer {
     }
 }
 
+// TODO: This method is only in newer versions of Bevy, this is a workaround.
+// https://docs.rs/bevy/latest/bevy/prelude/struct.World.html#method.spawn_at
+pub fn spawn_at(world: &mut World, entity: Entity) {
+    #[allow(deprecated)]
+    let _ = world.insert_or_spawn_batch([(entity, ())]);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,34 +175,49 @@ mod tests {
     #[derive(Component, Clone, Debug, PartialEq)]
     struct Value(u32);
 
+    fn create_test_synchronizer() -> Synchronizer {
+        let mut synchronizer = Synchronizer::new();
+        synchronizer.register_component::<Marker>();
+        synchronizer.register_component::<Value>();
+        synchronizer
+    }
+
     #[test]
-    fn test_marker_component_filters_synchronization() {
+    fn test_sync() {
         let mut source = World::new();
         let marked = source.spawn((Marker, Value(1))).id();
         let unmarked = source.spawn(Value(2)).id();
 
-        let mut synchronizer = Synchronizer::new::<Marker>();
-        synchronizer.register_component::<Value, Marker>();
-
-        let source_entities = synchronizer.synchronized_entities(&source);
-
+        let synchronizer = create_test_synchronizer();
         let mut target = World::new();
         synchronizer.sync(&source, &mut target);
 
         assert_eq!(
-            source_entities,
-            vec![marked],
-            "Only the entity with the marker component should be synchronized."
+            vec![target.get::<Value>(marked), target.get::<Value>(unmarked)],
+            vec![Some(&Value(1)), Some(&Value(2))],
+            "All entities with registered components should be synchronized."
         );
+    }
+
+    #[test]
+    fn test_sync_with() {
+        let mut source = World::new();
+        let marked = source.spawn((Marker, Value(1))).id();
+        let unmarked = source.spawn(Value(2)).id();
+
+        let synchronizer = create_test_synchronizer();
+        let mut target = World::new();
+        synchronizer.sync_with::<Marker>(&source, &mut target);
+
         assert_eq!(
             target.get::<Value>(marked),
             Some(&Value(1)),
-            "Marked entity should be synchronized with its Value component."
+            "An entity with marker component, and its registered components should be synchronized."
         );
         assert_eq!(
             target.get::<Value>(unmarked),
             None,
-            "Unmarked entity should not be synchronized."
+            "An entity without a marker component should not be synchronized."
         );
     }
 
@@ -231,17 +226,14 @@ mod tests {
         #[derive(Resource, Clone)]
         struct Config;
 
-        let mut synchronizer = Synchronizer::new::<Marker>();
+        let mut synchronizer = Synchronizer::new();
+        synchronizer.register_component::<Marker>();
         for _ in 0..2 {
-            synchronizer.register_component::<Value, Marker>();
+            synchronizer.register_component::<Value>();
             synchronizer.register_resource::<Config>();
         }
 
-        assert_eq!(
-            synchronizer.component_synchronizers.len(),
-            2,
-            "The marker component itself is auto-registered, plus Value."
-        );
+        assert_eq!(synchronizer.component_synchronizers.len(), 2);
         assert_eq!(synchronizer.resource_synchronizers.len(), 1);
     }
 
@@ -249,22 +241,20 @@ mod tests {
     fn test_synchronization_round_trip() {
         let mut source = World::new();
         let marked = source.spawn((Marker, Value(1))).id();
+        source.spawn(Value(2));
 
-        let mut synchronizer = Synchronizer::new::<Marker>();
-        synchronizer.register_component::<Value, Marker>();
+        let synchronizer = create_test_synchronizer();
 
-        let state = synchronizer.create_state(&source);
+        let state = SimulationState::extract_with::<Marker>(&synchronizer, &source);
 
         let mut target = World::new();
         synchronizer.sync(&state.0, &mut target);
 
-        assert_eq!(target.get::<Value>(marked), Some(&Value(1)),);
+        assert_eq!(target.get::<Value>(marked), Some(&Value(1)));
+        assert_eq!(
+            target.iter_entities().count(),
+            1,
+            "Only the marked entity should survive the round trip."
+        );
     }
-}
-
-// TODO: This method is only in newer versions of Bevy, this is a workaround.
-// https://docs.rs/bevy/latest/bevy/prelude/struct.World.html#method.spawn_at
-pub fn spawn_at(world: &mut World, entity: Entity) {
-    #[allow(deprecated)]
-    let _ = world.insert_or_spawn_batch([(entity, ())]);
 }
