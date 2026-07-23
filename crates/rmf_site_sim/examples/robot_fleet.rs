@@ -81,41 +81,6 @@ struct Trajectory {
     points: Vec<TrajectoryPoint>,
 }
 
-impl Trajectory {
-    fn at(&self, time: SimulationTime) -> Option<Pose> {
-        let first = self.points.first()?;
-        let last = self.points.last()?;
-
-        if time <= first.time {
-            return Some(first.pose);
-        }
-        if time >= last.time {
-            return Some(last.pose);
-        }
-
-        let next_idx = self.points.partition_point(|point| point.time <= time);
-        let prev_point = &self.points[next_idx - 1];
-        let next_point = &self.points[next_idx];
-        let point_delta = next_point.time.elapsed() - prev_point.time.elapsed();
-        let progress = if point_delta.is_zero() {
-            0.0
-        } else {
-            (time.elapsed() - prev_point.time.elapsed()).as_secs_f32() / point_delta.as_secs_f32()
-        };
-
-        Some(Pose {
-            translation: prev_point
-                .pose
-                .translation
-                .lerp(next_point.pose.translation, progress),
-            rotation: prev_point
-                .pose
-                .rotation
-                .slerp(next_point.pose.rotation, progress),
-        })
-    }
-}
-
 /// A waypoint, which can be visited or unvisited.
 #[derive(Component, Clone, Debug, Eq, PartialEq)]
 enum Waypoint {
@@ -132,15 +97,6 @@ fn main() {
             SimulationPlaybackKeyboardPlugin,
         ))
         .add_systems(Startup, setup)
-        // Animation and visualization systems to show states during playback.
-        .add_systems(
-            Update,
-            (
-                animate_robots,
-                (draw_robots, draw_waypoints, draw_trajectory),
-            )
-                .chain(),
-        )
         .run();
 }
 
@@ -167,6 +123,15 @@ fn setup(world: &mut World) {
         .register_resource::<ActiveRequestEntities>()
         // Systems representing models used to compute the simulation.
         .add_simulation_systems((request_generator, planner, robot))
+        // Systems to visualize this simulation's synchronized state in the main world while it
+        // is the active playback simulation.
+        .add_visualization_systems(
+            (
+                animate_robots,
+                (draw_robots, draw_waypoints, draw_trajectory),
+            )
+                .chain(),
+        )
         .build(world);
 
     let simulation_entity = world.spawn(simulation).id();
@@ -346,10 +311,43 @@ fn animate_robots(
     };
 
     for (mut pose, trajectory) in &mut robots {
-        if let Some(interpolated) = trajectory.at(time) {
+        if let Some(interpolated) = get_pose_at(trajectory, time) {
             *pose = interpolated;
         }
     }
+}
+
+fn get_pose_at(trajectory: &Trajectory, time: SimulationTime) -> Option<Pose> {
+    let first = trajectory.points.first()?;
+    let last = trajectory.points.last()?;
+
+    if time <= first.time {
+        return Some(first.pose);
+    }
+    if time >= last.time {
+        return Some(last.pose);
+    }
+
+    let next_idx = trajectory.points.partition_point(|point| point.time <= time);
+    let prev_point = &trajectory.points[next_idx - 1];
+    let next_point = &trajectory.points[next_idx];
+    let point_delta = next_point.time.elapsed() - prev_point.time.elapsed();
+    let progress = if point_delta.is_zero() {
+        0.0
+    } else {
+        (time.elapsed() - prev_point.time.elapsed()).as_secs_f32() / point_delta.as_secs_f32()
+    };
+
+    Some(Pose {
+        translation: prev_point
+            .pose
+            .translation
+            .lerp(next_point.pose.translation, progress),
+        rotation: prev_point
+            .pose
+            .rotation
+            .slerp(next_point.pose.rotation, progress),
+    })
 }
 
 /// Draws robots using a circle and arrow with gizmos.

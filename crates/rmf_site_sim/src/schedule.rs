@@ -16,6 +16,11 @@ pub struct SimulationStartup;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
 pub struct SimulationSystemExec;
 
+/// The schedule run in the main world to visualize a simulation while it is the active playback
+/// simulation.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
+pub struct SimulationVisualize;
+
 #[derive(Default, Clone)]
 pub enum SystemExecutionOrdering {
     /// Systems may run in any order based on dependencies and user-defined ordering constraints.
