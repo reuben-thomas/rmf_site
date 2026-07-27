@@ -14,6 +14,9 @@ pub trait DiscreteEvent: Send + Sync + 'static {
 
     /// Clones into a boxed object.
     fn clone_to_box(&self) -> Box<dyn DiscreteEvent>;
+
+    /// A short, human-readable name identifying this kind of event.
+    fn name(&self) -> &'static str;
 }
 
 impl<T> DiscreteEvent for T
@@ -26,6 +29,10 @@ where
 
     fn clone_to_box(&self) -> Box<dyn DiscreteEvent> {
         Box::new(self.clone())
+    }
+
+    fn name(&self) -> &'static str {
+        std::any::type_name::<T>()
     }
 }
 
