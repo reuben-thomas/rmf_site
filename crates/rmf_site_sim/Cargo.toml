@@ -13,3 +13,5 @@ crossbeam-channel = { workspace = true }
 
 [dev-dependencies]
 rand = "0.8"
+rmf_site_editor = { workspace = true }
+rmf_site_egui = { workspace = true }

@@ -328,7 +328,9 @@ fn get_pose_at(trajectory: &Trajectory, time: SimulationTime) -> Option<Pose> {
         return Some(last.pose);
     }
 
-    let next_idx = trajectory.points.partition_point(|point| point.time <= time);
+    let next_idx = trajectory
+        .points
+        .partition_point(|point| point.time <= time);
     let prev_point = &trajectory.points[next_idx - 1];
     let next_point = &trajectory.points[next_idx];
     let point_delta = next_point.time.elapsed() - prev_point.time.elapsed();
