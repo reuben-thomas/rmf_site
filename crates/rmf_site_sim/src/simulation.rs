@@ -128,7 +128,7 @@ pub struct Simulation {
 }
 
 impl Simulation {
-    // TODO: Should extract be performed explicitly? e.g. Simulation::extract, Simulation::compute
+    // TODO(@reuben-thomas): Should extract be performed explicitly? e.g. Simulation::extract, Simulation::compute
     fn new<M: Component + Clone>(builder: SimulationBuilder<M>, world: &World) -> Self {
         let (sender, receiver) = unbounded();
         compute_async(
@@ -162,7 +162,7 @@ impl Simulation {
         &self.synchronizer
     }
 
-    // TODO: View usage
+    // TODO(@reuben-thomas): View usage
     pub fn take_visualization_schedule(&mut self) -> Schedule {
         std::mem::replace(
             &mut self.visualization_schedule,
@@ -174,7 +174,7 @@ impl Simulation {
         self.visualization_schedule = schedule;
     }
 
-    // TODO: Should this provide an iterator instead?
+    // TODO(@reuben-thomas): Should this provide an iterator instead?
     /// The computed simulation steps, ordered by simulation time.
     pub fn steps(&self) -> &BTreeMap<SimulationTime, SimulationStep> {
         &self.simulation_steps
@@ -190,7 +190,7 @@ impl Simulation {
             .elapsed()
     }
 
-    // TODO: Time bound this system in order to avoid delaying the main app.
+    // TODO(@reuben-thomas): Time bound this system in order to avoid delaying the main app.
     /// Applies [`StateUpdate`]s received from the compute task.
     fn process_updates(mut simulations: Query<&mut Simulation>) {
         for mut simulation in &mut simulations {

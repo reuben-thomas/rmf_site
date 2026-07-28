@@ -120,7 +120,7 @@ impl ScheduleBuildPass for TotalOrderingBuildPass {
         std::iter::empty()
     }
 
-    // TODO: Toposort for each ScheduleGraph::conflicting_systems set
+    // TODO(@reuben-thomas): Toposort for each ScheduleGraph::conflicting_systems set
     fn build(
         &mut self,
         _world: &mut World,
