@@ -231,7 +231,7 @@ impl<'a> SimulationPlaybackEventTable<'a> {
     pub fn new(view: SimulationActivePlaybackView<'a>) -> Self {
         Self {
             view,
-            max_height: 200.0,
+            max_height: 300.0,
         }
     }
 
@@ -252,7 +252,7 @@ impl<'a> SimulationPlaybackEventTable<'a> {
         egui::ScrollArea::vertical()
             .id_salt("simulation_playback_event_table")
             .max_height(self.max_height)
-            .auto_shrink([false, false])
+            .auto_shrink([false, true])
             .show(ui, |ui| {
                 egui::Grid::new("simulation_playback_event_table_grid")
                     .num_columns(2)

@@ -37,7 +37,7 @@ pub const PLAYBACK_SPEED_RANGE: RangeInclusive<f32> = 0.01..=100.0;
 pub enum SimulationPlaybackCommand {
     /// Selects a Simulation for playback.
     SetActiveSimulation(Option<Entity>),
-    /// Plays from the current playback time, with the behaviour at end defined by [`SimulationPlaybackEndBehaviour`].
+    /// Plays from the current playback time, with the behaviour at end defined by [`SimulationReplayBehaviour`].
     Play,
     /// Pauses at the current playback time.
     Pause,
@@ -52,7 +52,7 @@ pub enum SimulationPlaybackCommand {
     /// Seeks to the last computed step of the simulation and pauses.
     SeekToLast,
     /// Sets the behaviour of playback upon reaching the end of the active simulation.
-    SetEndBehaviour(SimulationPlaybackEndBehaviour),
+    SetReplayBehaviour(SimulationReplayBehaviour),
 }
 
 /// A seek target for [`SimulationPlaybackCommand::Seek`].
@@ -88,15 +88,9 @@ pub enum SeekDirection {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SimulationPlaybackSeekOutOfBounds;
 
-/// Behaviour of playback upon reaching the end of a simulation.
+/// Behaviour of replay upon reaching the end of a simulation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SimulationPlaybackEndBehaviour {
-    /// Pause at the end of the simulation.
-    #[default]
-    Pause,
-    /// Pause for the specified duration, then replay from the initial state.
-    ReplayAfterPause(Duration),
-}
+pub struct SimulationReplayBehaviour(pub Option<Duration>);
 
 /// The play/pause state of the active playback.
 #[derive(Clone, Debug, Default)]
@@ -180,16 +174,12 @@ impl SimulationPlayback {
                     );
 
                     if active.at_end(active.simulation_ref(world)) {
-                        match active.end_behaviour {
-                            SimulationPlaybackEndBehaviour::Pause => {
-                                active.state = SimulationPlaybackState::Paused;
-                            }
-                            SimulationPlaybackEndBehaviour::ReplayAfterPause(pause_duration) => {
-                                active.state = SimulationPlaybackState::PendingReplay {
-                                    timer: Timer::new(pause_duration, TimerMode::Once),
-                                };
-                            }
-                        }
+                        active.state = match active.replay_behaviour.0 {
+                            Some(pause) => SimulationPlaybackState::PendingReplay {
+                                timer: Timer::new(pause, TimerMode::Once),
+                            },
+                            None => SimulationPlaybackState::Paused,
+                        };
                     }
                 }
                 SimulationPlaybackState::PendingReplay { timer } => {
@@ -243,7 +233,7 @@ pub struct SimulationActivePlayback {
     /// The speed multiplier applied while playing.
     pub speed: f32,
     /// The behaviour upon playing up to the end of the simulation.
-    pub end_behaviour: SimulationPlaybackEndBehaviour,
+    pub replay_behaviour: SimulationReplayBehaviour,
 }
 
 impl SimulationActivePlayback {
@@ -271,7 +261,7 @@ impl SimulationActivePlayback {
             time: SimulationTime::default(),
             applied_steps: 0,
             speed: 1.0,
-            end_behaviour: SimulationPlaybackEndBehaviour::default(),
+            replay_behaviour: SimulationReplayBehaviour::default(),
         };
         active_playback.load_start(world);
         Some(active_playback)
@@ -336,8 +326,8 @@ impl SimulationActivePlayback {
                 self.seek_to_end(world);
                 self.state = SimulationPlaybackState::Paused;
             }
-            SimulationPlaybackCommand::SetEndBehaviour(end_behaviour) => {
-                self.end_behaviour = end_behaviour;
+            SimulationPlaybackCommand::SetReplayBehaviour(replay_behaviour) => {
+                self.replay_behaviour = replay_behaviour;
             }
             SimulationPlaybackCommand::SetActiveSimulation(_) => {
                 unreachable!("Should be handled by `SimulationPlayback`")
