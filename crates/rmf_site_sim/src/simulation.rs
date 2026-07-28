@@ -12,6 +12,7 @@ use bevy::prelude::*;
 use crossbeam_channel::{Receiver, unbounded};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
+use std::time::Duration;
 
 /// Plugin for computing discrete event simulations.
 pub struct SimulationPlugin;
@@ -161,14 +162,32 @@ impl Simulation {
         &self.synchronizer
     }
 
-    pub fn run_visualization_schedule(&mut self, world: &mut World) {
-        self.visualization_schedule.run(world);
+    // TODO: View usage
+    pub fn take_visualization_schedule(&mut self) -> Schedule {
+        std::mem::replace(
+            &mut self.visualization_schedule,
+            Schedule::new(SimulationVisualize),
+        )
+    }
+
+    pub fn restore_visualization_schedule(&mut self, schedule: Schedule) {
+        self.visualization_schedule = schedule;
     }
 
     // TODO: Should this provide an iterator instead?
     /// The computed simulation steps, ordered by simulation time.
     pub fn steps(&self) -> &BTreeMap<SimulationTime, SimulationStep> {
         &self.simulation_steps
+    }
+
+    /// The elapsed time of the last computed step, or zero when no steps have been computed yet.
+    pub fn duration(&self) -> Duration {
+        self.simulation_steps
+            .keys()
+            .last()
+            .copied()
+            .unwrap_or_default()
+            .elapsed()
     }
 
     // TODO: Time bound this system in order to avoid delaying the main app.
