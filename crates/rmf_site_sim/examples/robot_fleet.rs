@@ -17,10 +17,10 @@ use rand::Rng;
 use rmf_site_sim::compute::SimulationComputeClock;
 use rmf_site_sim::event::{DiscreteChangeWriter, DiscreteComponentWriter};
 use rmf_site_sim::playback::{
-    SimulationPlayback, SimulationPlaybackCommand, SimulationPlaybackEndBehaviour,
-    SimulationPlaybackPlugin,
+    SimulationPlaybackCommand, SimulationPlaybackEndBehaviour, SimulationPlaybackPlugin,
+    SimulationPlaybackView,
 };
-use rmf_site_sim::playback_ui::{SimulationPlaybackKeyboardPlugin, SimulationPlaybackSpeed};
+use rmf_site_sim::playback_ui::SimulationPlaybackKeyboardPlugin;
 use rmf_site_sim::time::SimulationTime;
 use rmf_site_sim::{SimulationBuilder, SimulationPlugin};
 use std::time::Duration;
@@ -136,20 +136,16 @@ fn setup(world: &mut World) {
 
     let simulation_entity = world.spawn(simulation).id();
 
-    // Use `PLAYBACK_SPEED` as the default speed for keyboard-driven playback,
-    // instead of the default 1.0x speed.
-    world.insert_resource(SimulationPlaybackSpeed(PLAYBACK_SPEED));
-
-    // Select the simulation to play back, replay it on a loop, and start playing.
+    // Select the simulation to play back, replay it on a loop, and start playing at
+    // `PLAYBACK_SPEED` instead of the default 1.0x speed.
     world.send_event(SimulationPlaybackCommand::SetActiveSimulation(Some(
         simulation_entity,
     )));
     world.send_event(SimulationPlaybackCommand::SetEndBehaviour(
         SimulationPlaybackEndBehaviour::ReplayAfterPause(PAUSE_BEFORE_REPLAY),
     ));
-    world.send_event(SimulationPlaybackCommand::Play {
-        speed: PLAYBACK_SPEED,
-    });
+    world.send_event(SimulationPlaybackCommand::SetSpeed(PLAYBACK_SPEED));
+    world.send_event(SimulationPlaybackCommand::Play);
 }
 
 /// Spawns a specified number of robots and waypoints of random pose within bounds.
@@ -303,10 +299,10 @@ fn robot(
 }
 
 fn animate_robots(
-    playback: Res<SimulationPlayback>,
+    playback: SimulationPlaybackView,
     mut robots: Query<(&mut Pose, &Trajectory), With<Robot>>,
 ) {
-    let Some(time) = playback.time() else {
+    let Some(time) = playback.active().map(|active| active.playback.time) else {
         return;
     };
 

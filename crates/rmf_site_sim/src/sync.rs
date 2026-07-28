@@ -136,7 +136,7 @@ impl StateUpdateSender {
 pub struct SimulationEventBuffer(Vec<Box<dyn DiscreteEvent>>);
 
 impl SimulationEventBuffer {
-    pub(crate) fn extend(&mut self, events: impl IntoIterator<Item = Box<dyn DiscreteEvent>>) {
+    pub fn extend(&mut self, events: impl IntoIterator<Item = Box<dyn DiscreteEvent>>) {
         self.0.extend(events);
     }
 
@@ -144,7 +144,7 @@ impl SimulationEventBuffer {
         std::mem::take(&mut self.0)
     }
 
-    pub(crate) fn send_step(
+    pub fn send_step(
         clock: Res<SimulationComputeClock>,
         mut buffer: ResMut<Self>,
         sender: Res<StateUpdateSender>,

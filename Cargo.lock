@@ -5806,6 +5806,7 @@ name = "rmf_site_sim"
 version = "0.0.1"
 dependencies = [
  "bevy",
+ "bevy_egui",
  "crossbeam-channel",
  "rand",
  "rmf_site_editor",
