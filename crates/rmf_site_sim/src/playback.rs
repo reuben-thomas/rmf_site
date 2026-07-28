@@ -166,8 +166,6 @@ impl SimulationPlayback {
             match &mut active.state {
                 SimulationPlaybackState::Paused => {}
                 SimulationPlaybackState::Playing => {
-                    let target_time =
-                        SimulationTime::new(active.time.elapsed() + delta.mul_f32(active.speed));
                     active.seek_to_time(
                         world,
                         SimulationTime::new(active.time.elapsed() + delta.mul_f32(active.speed)),
@@ -254,7 +252,7 @@ impl SimulationActivePlayback {
         };
 
         let mut active_playback = Self {
-            simulation: simulation,
+            simulation,
             pre_simulation_state: SimulationState::extract(sim.synchronizer(), world),
             synchronizer: sim.synchronizer().clone(),
             state: SimulationPlaybackState::default(),
