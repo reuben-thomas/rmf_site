@@ -7,6 +7,8 @@ use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
 // TODO(@reuben-thomas): Use the Bevy `Command` and `Commands` queue instead of a blanket impl.
+// - component types should only require debug
+// - the event should implement display that calls debug
 /// An instantaneous change on the state of a simulation [`bevy::prelude::World`] during a simulation.
 pub trait DiscreteEvent: Send + Sync + 'static {
     /// Applies the event to the world.
