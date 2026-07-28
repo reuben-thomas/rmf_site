@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-// TODO:
+// TODO(@reuben-thomas):
 // - Should we make use of a Time<Simulation> resource instead? https://docs.rs/bevy/latest/bevy/time/struct.Time.html
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SimulationTime(Duration);

@@ -158,7 +158,7 @@ impl SimulationEventBuffer {
     }
 }
 
-// TODO: This method is only in newer versions of Bevy, this is a workaround.
+// TODO(@reuben-thomas): This method is only in newer versions of Bevy, this is a workaround.
 // https://docs.rs/bevy/latest/bevy/prelude/struct.World.html#method.spawn_at
 pub fn spawn_at(world: &mut World, entity: Entity) {
     #[allow(deprecated)]

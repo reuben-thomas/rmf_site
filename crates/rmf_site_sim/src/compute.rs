@@ -76,7 +76,7 @@ fn compute_simulation(mut app: App) -> AppExit {
         let _ = world.run_system_cached(CandidateDiscreteEvents::update_clock_with_pending_time);
         let _ = world.run_system_cached(SimulationComputeClock::advance);
 
-        // TODO:
+        // TODO(@reuben-thomas):
         // Configurable end conditions could include:
         // - A maximum number of steps:
         // - A generic user implemented trait e.g. `crate::simulation::EndCondition`

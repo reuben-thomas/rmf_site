@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
-// TODO: Use the Bevy `Command` and `Commands` queue instead of a blanket impl.
+// TODO(@reuben-thomas): Use the Bevy `Command` and `Commands` queue instead of a blanket impl.
 /// An instantaneous change on the state of a simulation [`bevy::prelude::World`] during a simulation.
 pub trait DiscreteEvent: Send + Sync + 'static {
     /// Applies the event to the world.
@@ -145,7 +145,7 @@ struct DiscreteComponentWrite<T: Component + Clone> {
     value: T,
 }
 
-// TODO: Handle failures
+// TODO(@reuben-thomas): Handle failures
 impl<T: Component + Clone> Command for DiscreteComponentWrite<T> {
     fn apply(self, world: &mut World) {
         world.entity_mut(self.entity).insert(self.value);
@@ -178,7 +178,7 @@ struct DiscreteResourceWrite<R: Resource + Clone> {
     value: R,
 }
 
-// TODO: Fail if the resource already exists?
+// TODO(@reuben-thomas): Fail if the resource already exists?
 impl<R: Resource + Clone> Command for DiscreteResourceWrite<R> {
     fn apply(self, world: &mut World) {
         world.insert_resource(self.value);

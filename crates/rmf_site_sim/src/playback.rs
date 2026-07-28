@@ -28,7 +28,7 @@ impl Plugin for SimulationPlaybackPlugin {
     }
 }
 
-// TODO: Should something similar be configurable at runtime? We may have high or low frequency event simulations.
+// TODO(@reuben-thomas): Should something similar be configurable at runtime? We may have high or low frequency event simulations.
 /// The allowed playback speed range.
 pub const PLAYBACK_SPEED_RANGE: RangeInclusive<f32> = 0.01..=100.0;
 
@@ -83,7 +83,7 @@ pub enum SeekDirection {
     Revert,
 }
 
-// TODO: Distinguish OOB between a complete and in progress computation simulation.
+// TODO(@reuben-thomas): Distinguish OOB between a complete and in progress computation simulation.
 /// The requested seek falls out of simulation's computed steps.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SimulationPlaybackSeekOutOfBounds;
@@ -203,7 +203,7 @@ impl SimulationPlayback {
         });
     }
 
-    // TODO: Is there a better pattern here to give temporary access?
+    // TODO(@reuben-thomas): Is there a better pattern here to give temporary access?
     /// Runs the active simulation's visualization schedule on the main world.
     fn visualize(world: &mut World) {
         let Some(simulation_entity) = world.resource::<SimulationPlayback>().active_simulation()
@@ -222,14 +222,14 @@ impl SimulationPlayback {
     }
 }
 
-// TODO: Use getters since these fields should not be directly mutated.
+// TODO(@reuben-thomas): Use getters since these fields should not be directly mutated.
 pub struct SimulationActivePlayback {
     /// The entity associated with the [`Simulation`] being played back.
     simulation: Entity,
     /// A snapshot of the world's state before this playback, to restore the state of the main world upon terminating
     /// this playback.
     pre_simulation_state: SimulationState,
-    // TODO: Clarify the use of a synchronizer for this purpose, can we assume the only relevant
+    // TODO(@reuben-thomas): Clarify the use of a synchronizer for this purpose, can we assume the only relevant
     // changes are guaranteed to be of the same component type?
     /// A synchronizer used to capture the state of the world before playback, and after.
     synchronizer: Synchronizer,
@@ -277,7 +277,7 @@ impl SimulationActivePlayback {
         Some(active_playback)
     }
 
-    // TODO: Override `std::ops::Drop` to prevent users from forgetting to call deactivate and reset the state of the world?
+    // TODO(@reuben-thomas): Override `std::ops::Drop` to prevent users from forgetting to call deactivate and reset the state of the world?
     /// Restores the world to the state before activation of the current simulation for playback
     fn deactivate(self, world: &mut World) {
         self.synchronizer.sync(&self.pre_simulation_state.0, world);
@@ -402,7 +402,7 @@ impl SimulationActivePlayback {
         self.time = time;
     }
 
-    // TODO: Distinguish between available end and actual end.
+    // TODO(@reuben-thomas): Distinguish between available end and actual end.
     /// Seeks so that every computed step has been applied.
     fn seek_to_end(&mut self, world: &mut World) {
         let available = self.simulation_ref(world).steps().len();
