@@ -17,8 +17,8 @@ use rand::Rng;
 use rmf_site_sim::compute::SimulationComputeClock;
 use rmf_site_sim::event::{DiscreteChangeWriter, DiscreteComponentWriter};
 use rmf_site_sim::playback::{
-    SimulationPlaybackCommand, SimulationPlaybackEndBehaviour, SimulationPlaybackPlugin,
-    SimulationPlaybackView,
+    SimulationPlaybackCommand, SimulationPlaybackPlugin, SimulationPlaybackView,
+    SimulationReplayBehaviour,
 };
 use rmf_site_sim::playback_ui::SimulationPlaybackKeyboardPlugin;
 use rmf_site_sim::time::SimulationTime;
@@ -141,8 +141,8 @@ fn setup(world: &mut World) {
     world.send_event(SimulationPlaybackCommand::SetActiveSimulation(Some(
         simulation_entity,
     )));
-    world.send_event(SimulationPlaybackCommand::SetEndBehaviour(
-        SimulationPlaybackEndBehaviour::ReplayAfterPause(PAUSE_BEFORE_REPLAY),
+    world.send_event(SimulationPlaybackCommand::SetReplayBehaviour(
+        SimulationReplayBehaviour(Some(PAUSE_BEFORE_REPLAY)),
     ));
     world.send_event(SimulationPlaybackCommand::SetSpeed(PLAYBACK_SPEED));
     world.send_event(SimulationPlaybackCommand::Play);
