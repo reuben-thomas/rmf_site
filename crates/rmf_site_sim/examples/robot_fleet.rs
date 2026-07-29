@@ -17,11 +17,11 @@ use bevy::prelude::*;
 use rand::Rng;
 use rmf_site_sim::compute::SimulationComputeClock;
 use rmf_site_sim::event::{DiscreteChangeWriter, DiscreteComponentWriter};
+use rmf_site_sim::interaction::keyboard::SimulationPlaybackKeyboardPlugin;
 use rmf_site_sim::playback::{
     SimulationPlaybackCommand, SimulationPlaybackPlugin, SimulationPlaybackView,
     SimulationReplayBehaviour,
 };
-use rmf_site_sim::playback_ui::SimulationPlaybackKeyboardPlugin;
 use rmf_site_sim::time::SimulationTime;
 use rmf_site_sim::{SimulationBuilder, SimulationPlugin};
 use std::time::Duration;

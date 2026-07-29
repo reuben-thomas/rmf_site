@@ -38,8 +38,8 @@
 //! | Output | Data produced by running the simulation. | A [`SimulationStep`] for each computed simulation time, collected by the [`Simulation`] component. |
 pub mod compute;
 pub mod event;
+pub mod interaction;
 pub mod playback;
-pub mod playback_ui;
 pub mod schedule;
 pub mod simulation;
 pub mod sync;
