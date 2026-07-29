@@ -157,7 +157,8 @@ struct SimulationComputeTile<'w, 's> {
 }
 
 impl<'w, 's> SimulationComputeTile<'w, 's> {
-    /// Entities for all direct tasks are either implicitly inherited or included in this scenario.
+    /// Entities for all direct tasks are either implicitly inherited or
+    /// included in this scenario.
     fn direct_included_or_inherited_tasks(&self) -> Vec<Entity> {
         let Some(current_scenario_entity) = self.current_scenario.0 else {
             return Vec::default();
@@ -266,7 +267,7 @@ impl<'w, 's> SimulationsTile<'w, 's> {
 
     fn show_simulation_details(ui: &mut Ui, simulation: &Simulation) {
         let steps = simulation.steps();
-        let event_count: usize = steps.values().map(|step| step.events.len()).sum();
+        let event_count: usize = steps.values().map(|step| step.event_count()).sum();
 
         ui.label(format!(
             "Extracted entities: {}",
@@ -426,7 +427,7 @@ mod simulation {
         Arrived,
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     pub struct RequestArrival {
         pub task: Entity,
     }
@@ -437,11 +438,7 @@ mod simulation {
         }
     }
 
-    pub fn spawn_simulation(
-        world: &mut World,
-        tasks: &[Entity],
-        name: String,
-    ) -> Entity {
+    pub fn spawn_simulation(world: &mut World, tasks: &[Entity], name: String) -> Entity {
         for &entity in tasks {
             world
                 .entity_mut(entity)

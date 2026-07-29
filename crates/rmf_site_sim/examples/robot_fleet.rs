@@ -1,10 +1,11 @@
-//! In this example, we configure, compute, and animate a simple discrete event simulation for a
-//! fleet of robots navigating to randomly assigned goals. Each model type within the simulation is
-//! represented as a Bevy system.
+//! In this example, we configure, compute, and animate a simple discrete event
+//! simulation for a fleet of robots navigating to randomly assigned goals. Each
+//! model type within the simulation is represented as a Bevy system.
 //!
-//! A request generator creates requests assigning robots to goal waypoints at random. A planner system
-//! generates trajectories from these requests. From the generated trajectories, a robot system then
-//! predicts waypoint visits and request completions.
+//! A request generator creates requests assigning robots to goal waypoints at
+//! random. A planner system generates trajectories from these requests. From
+//! the generated trajectories, a robot system then predicts waypoint visits and
+//! request completions.
 //!
 //! ```
 //! RequestGeneratorSystem --[RequestEvent..]--> PlannerSystem --[TrajectoryEvent..]--> RobotSystem --[WaypointEvent..]
@@ -69,14 +70,14 @@ struct Pose {
 }
 
 /// A point on a trajectory.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct TrajectoryPoint {
     time: SimulationTime,
     pose: Pose,
 }
 
 /// A trajectory for a robot to follow.
-#[derive(Component, Clone)]
+#[derive(Component, Clone, Debug)]
 struct Trajectory {
     points: Vec<TrajectoryPoint>,
 }
@@ -86,6 +87,40 @@ struct Trajectory {
 enum Waypoint {
     Visited,
     Unvisited,
+}
+
+/// Assigns a robot to a goal waypoint.
+#[derive(Clone, Debug)]
+struct SubmitRequest {
+    robot: Entity,
+    goal: Entity,
+}
+
+impl Command for SubmitRequest {
+    fn apply(self, world: &mut World) {
+        world
+            .entity_mut(self.robot)
+            .insert(Request { goal: self.goal });
+        let mut active_requests = world.resource_mut::<ActiveRequestEntities>();
+        active_requests.robots.insert(self.robot);
+        active_requests.waypoints.insert(self.goal);
+    }
+}
+
+/// Places a robot at the end of its trajectory and clears its request.
+#[derive(Clone, Debug)]
+struct CompleteRequest {
+    robot: Entity,
+    pose: Pose,
+}
+
+impl Command for CompleteRequest {
+    fn apply(self, world: &mut World) {
+        world
+            .entity_mut(self.robot)
+            .insert(self.pose)
+            .remove::<(Request, Trajectory)>();
+    }
 }
 
 fn main() {
@@ -148,7 +183,8 @@ fn setup(world: &mut World) {
     world.send_event(SimulationPlaybackCommand::Play);
 }
 
-/// Spawns a specified number of robots and waypoints of random pose within bounds.
+/// Spawns a specified number of robots and waypoints of random pose within
+/// bounds.
 fn spawn_robots_waypoints(world: &mut World, n: usize, position_bounds: Rect) {
     let mut rng = rand::thread_rng();
 
@@ -168,7 +204,8 @@ fn spawn_robots_waypoints(world: &mut World, n: usize, position_bounds: Rect) {
     }
 }
 
-/// Generates requests assigning robots to waypoints arbitrarily, exactly once per robot and waypoint.
+/// Generates requests assigning robots to waypoints arbitrarily, exactly once
+/// per robot and waypoint.
 fn request_generator(
     robots: Query<(Entity, &Name), With<Robot>>,
     waypoints: Query<(Entity, &Name), With<Waypoint>>,
@@ -189,12 +226,7 @@ fn request_generator(
         let time = SimulationTime::new(Duration::from_secs(
             REQUEST_ARRIVAL_STAGGER_SECONDS * schedule_number,
         ));
-        changes.write(time, move |world: &mut World| {
-            world.entity_mut(robot).insert(Request { goal });
-            let mut active_requests = world.resource_mut::<ActiveRequestEntities>();
-            active_requests.robots.insert(robot);
-            active_requests.waypoints.insert(goal);
-        });
+        changes.write(time, SubmitRequest { robot, goal });
         info!(
             "[request_generator] Scheduled request for {} to {} at {:?}",
             robot_name, waypoint_name, time
@@ -256,8 +288,9 @@ fn plan_trajectory(
     Trajectory { points }
 }
 
-/// A robot controller that marks the goal waypoint as visited when a robot's trajectory ends,
-/// then completes the request by placing the robot at its goal.
+/// A robot controller that marks the goal waypoint as visited when a robot's
+/// trajectory ends, then completes the request by placing the robot at its
+/// goal.
 fn robot(
     robots: Query<(Entity, &Request, &Trajectory, &Name), With<Robot>>,
     target_waypoints: Query<&Waypoint>,
@@ -282,13 +315,13 @@ fn robot(
                 );
             }
             _ => {
-                let end_pose = end.pose;
-                changes.write(end.time, move |world: &mut World| {
-                    world
-                        .entity_mut(robot)
-                        .insert(end_pose)
-                        .remove::<(Request, Trajectory)>();
-                });
+                changes.write(
+                    end.time,
+                    CompleteRequest {
+                        robot,
+                        pose: end.pose,
+                    },
+                );
                 info!(
                     "[robot] Scheduled request completion for {} at {:?}",
                     robot_name, end.time

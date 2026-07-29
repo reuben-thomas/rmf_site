@@ -1,8 +1,8 @@
 use std::ops::{Add, Sub};
 use std::time::Duration;
 
-/// A point in simulated time within a simulation, measuring the elapsed duration
-/// since the beginning of the simulation, [`SimulationTime::zero`].
+/// A point in simulated time within a simulation, measuring the elapsed
+/// duration since the beginning of the simulation, [`SimulationTime::zero`].
 ///
 /// This type is only useful with [`Duration`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -41,8 +41,8 @@ impl Sub<Duration> for SimulationTime {
 
     /// # Panics
     ///
-    /// Panics if `duration` is longer than the time elapsed so far, as [`Duration`] subtraction
-    /// does.
+    /// Panics if `duration` is longer than the time elapsed so far, as
+    /// [`Duration`] subtraction does.
     fn sub(self, duration: Duration) -> Self {
         Self(self.0 - duration)
     }

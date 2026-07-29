@@ -1,3 +1,4 @@
+use crate::event::DynDiscreteEvent;
 use crate::playback::{
     PLAYBACK_SPEED_RANGE, SeekDirection, SimulationActivePlaybackView, SimulationPlaybackCommand,
     SimulationPlaybackSeek, SimulationPlaybackView,
@@ -6,6 +7,7 @@ use crate::time::SimulationTime;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy_egui::egui;
+use std::hash::Hash;
 use std::time::Duration;
 
 // TODO: Feature flag this out
@@ -281,20 +283,34 @@ impl<'a> SimulationPlaybackEventTable<'a> {
                                 response.scroll_to_me(Some(egui::Align::Center));
                             }
 
-                            let event_count = step.events.len();
-                            egui::CollapsingHeader::new(format!(
-                                "{event_count} event{}",
-                                if event_count == 1 { "" } else { "s" }
-                            ))
-                            .id_salt(index)
-                            .show(ui, |ui| {
-                                for event in &step.events {
-                                    ui.label(event.name());
+                            let event_count = step.event_count();
+                            if event_count == 1 {
+                                // A lone event stands in for the step, without a grouping header.
+                                if let Some(event) = step.events().next() {
+                                    show_event(ui, index, event);
                                 }
-                            });
+                            } else {
+                                egui::CollapsingHeader::new(format!("{event_count} Events"))
+                                    .id_salt(index)
+                                    .show(ui, |ui| {
+                                        for (event_index, event) in step.events().enumerate() {
+                                            show_event(ui, (index, event_index), event);
+                                        }
+                                    });
+                            }
                             ui.end_row();
                         }
                     });
             });
     }
+}
+
+/// Shows one event as a collapsible header naming its kind, revealing the
+/// values it carries.
+fn show_event(ui: &mut egui::Ui, id_salt: impl Hash, event: &dyn DynDiscreteEvent) {
+    egui::CollapsingHeader::new(event.name())
+        .id_salt(id_salt)
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(format!("{event:#?}")).monospace());
+        });
 }

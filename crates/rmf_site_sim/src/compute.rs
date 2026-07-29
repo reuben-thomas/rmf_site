@@ -9,8 +9,8 @@ use crossbeam_channel::Sender;
 use std::collections::BTreeSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-/// Computes [`SimulationStep`](crate::simulation::SimulationStep)s for a simulation in a
-/// [`AsyncComputeTaskPool`].
+/// Computes [`SimulationStep`](crate::simulation::SimulationStep)s for a
+/// simulation in a [`AsyncComputeTaskPool`].
 pub fn compute_async(
     init_state: SimulationState,
     startup_schedule: Schedule,
@@ -42,8 +42,8 @@ pub fn compute_async(
         .detach();
 }
 
-/// Builds an [`App`] with the initial state, plugins, schedules, and sets [`compute_simulation`]
-/// as the runner.
+/// Builds an [`App`] with the initial state, plugins, schedules, and sets
+/// [`compute_simulation`] as the runner.
 fn build_app(
     init_state: SimulationState,
     startup_schedule: Schedule,
@@ -66,7 +66,8 @@ fn build_app(
     }
     app
 }
-/// A runner to compute and send one [`crate::simulation::SimulationStep`] at a time to the main app.
+/// A runner to compute and send one [`crate::simulation::SimulationStep`] at a
+/// time to the main app.
 fn compute_simulation(mut app: App) -> AppExit {
     let world = app.world_mut();
     world.run_schedule(SimulationStartup);
@@ -102,7 +103,8 @@ fn compute_time_step(world: &mut World) {
     }
 }
 
-/// Clock for tracking the current simulation time being computed, as well as pending times to be processed.
+/// Clock for tracking the current simulation time being computed, as well as
+/// pending times to be processed.
 #[derive(Resource, Default)]
 pub struct SimulationComputeClock {
     current: SimulationTime,
@@ -129,7 +131,8 @@ impl SimulationComputeClock {
         self.pending.insert(time)
     }
 
-    /// System to advance the compute clock to the next pending time, if one exists.
+    /// System to advance the compute clock to the next pending time, if one
+    /// exists.
     fn advance(mut clock: ResMut<SimulationComputeClock>) {
         if clock.at_end {
             return;
