@@ -4,7 +4,7 @@ use crate::schedule::{
     ScheduleBuilder, SimulationStartup, SimulationSystemExec, SimulationVisualize,
     SystemExecutionOrdering,
 };
-use crate::sync::{SimulationState, Synchronizer};
+use crate::sync::Synchronizer;
 use crate::time::SimulationTime;
 use bevy::app::Plugins;
 use bevy::ecs::system::ScheduleSystem;
@@ -211,6 +211,25 @@ impl Simulation {
                 }
             }
         }
+    }
+}
+
+/// A snapshot of a world's synchronized entities, components, and resources.
+pub struct SimulationState(pub World);
+
+impl SimulationState {
+    /// Extracts a state containing all entities with registered components.
+    pub fn extract(synchronizer: &Synchronizer, source: &World) -> Self {
+        let mut world = World::new();
+        synchronizer.sync(source, &mut world);
+        Self(world)
+    }
+
+    /// Extracts a state containing only entities with the marker component `M`.
+    pub fn extract_with<M: Component>(synchronizer: &Synchronizer, source: &World) -> Self {
+        let mut world = World::new();
+        synchronizer.sync_with::<M>(source, &mut world);
+        Self(world)
     }
 }
 
