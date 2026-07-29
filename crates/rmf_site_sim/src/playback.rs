@@ -1,7 +1,7 @@
 //! Playback of computed [`Simulation`] steps in the main world.
 
-use crate::simulation::{Simulation, SimulationComputeState};
-use crate::sync::{SimulationState, Synchronizer};
+use crate::simulation::{Simulation, SimulationComputeState, SimulationState};
+use crate::sync::Synchronizer;
 use crate::time::SimulationTime;
 use bevy::ecs::event::EventCursor;
 use bevy::ecs::system::SystemParam;

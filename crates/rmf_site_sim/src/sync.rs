@@ -10,6 +10,31 @@ use std::any::TypeId;
 
 /// Synchronizes entities, components, and resources from a source world into a
 /// target world.
+///
+/// ```
+/// # use bevy::prelude::*;
+/// # use rmf_site_sim::sync::Synchronizer;
+///
+/// #[derive(Component, Clone, PartialEq, Debug)]
+/// struct Position(f32);
+///
+/// #[derive(Resource, Clone, PartialEq, Debug)]
+/// struct Gravity(f32);
+///
+/// let mut source = World::new();
+/// let entity = source.spawn(Position(1.0)).id();
+/// source.insert_resource(Gravity(9.8));
+///
+/// let mut synchronizer = Synchronizer::new();
+/// synchronizer.register_component::<Position>();
+/// synchronizer.register_resource::<Gravity>();
+///
+/// let mut target = World::new();
+/// synchronizer.sync(&source, &mut target);
+///
+/// assert_eq!(target.get::<Position>(entity), Some(&Position(1.0)));
+/// assert_eq!(target.get_resource::<Gravity>(), Some(&Gravity(9.8)));
+/// ```
 #[derive(Clone, Default)]
 pub struct Synchronizer {
     component_synchronizers: TypeIdMap<fn(&World, &mut World, Option<ComponentId>)>,
@@ -17,14 +42,16 @@ pub struct Synchronizer {
 }
 
 impl Synchronizer {
+    /// Creates a new empty [`Synchronizer`] without any registered components or resources.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Registers a component to synchronize.
     pub fn register_component<T: Component + Clone>(&mut self) {
         if self
             .component_synchronizers
-            .insert(TypeId::of::<T>(), Self::sync_components::<T>)
+            .insert(TypeId::of::<T>(), Self::sync_component::<T>)
             .is_some()
         {
             warn!(
@@ -75,7 +102,7 @@ impl Synchronizer {
         }
     }
 
-    fn sync_components<T: Component + Clone>(
+    fn sync_component<T: Component + Clone>(
         source: &World,
         target: &mut World,
         marker: Option<ComponentId>,
@@ -99,29 +126,12 @@ impl Synchronizer {
     }
 }
 
-/// A snapshot of a world's synchronized entities, components, and resources.
-pub struct SimulationState(pub World);
-
-impl SimulationState {
-    /// Extracts a state containing all entities with registered components.
-    pub fn extract(synchronizer: &Synchronizer, source: &World) -> Self {
-        let mut world = World::new();
-        synchronizer.sync(source, &mut world);
-        Self(world)
-    }
-
-    /// Extracts a state containing only entities with the marker component `M`.
-    pub fn extract_with<M: Component>(synchronizer: &Synchronizer, source: &World) -> Self {
-        let mut world = World::new();
-        synchronizer.sync_with::<M>(source, &mut world);
-        Self(world)
-    }
-}
-
+/// Sends [`SimulationComputeUpdate`]s from the compute task to the main world.
 #[derive(Resource)]
 pub struct StateUpdateSender(Sender<SimulationComputeUpdate>);
 
 impl StateUpdateSender {
+    /// Creates a sender that sends updates over the given channel.
     pub fn new(sender: Sender<SimulationComputeUpdate>) -> Self {
         Self(sender)
     }
@@ -131,9 +141,8 @@ impl StateUpdateSender {
     }
 }
 
-/// A buffer to store the [`DiscreteEvent`](crate::event::DiscreteEvent)s
-/// executed in the current step, sent to the main world as a single
-/// [`SimulationStep`].
+/// A buffer to store [`DiscreteEvent`](crate::event::DiscreteEvent)s
+/// executed in the current step, sent to the main world as a single[`SimulationStep`].
 #[derive(Resource, Default)]
 pub struct SimulationEventBuffer(Vec<Box<dyn DynDiscreteEvent>>);
 
@@ -146,6 +155,7 @@ impl SimulationEventBuffer {
         std::mem::take(&mut self.0)
     }
 
+    /// System that sends the buffered events as one [`SimulationStep`], if any.
     pub fn send_step(
         clock: Res<SimulationComputeClock>,
         mut buffer: ResMut<Self>,
@@ -170,6 +180,7 @@ pub fn spawn_at(world: &mut World, entity: Entity) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::simulation::SimulationState;
 
     #[derive(Component, Clone)]
     struct Marker;
@@ -177,10 +188,14 @@ mod tests {
     #[derive(Component, Clone, Debug, PartialEq)]
     struct Value(u32);
 
+    #[derive(Resource, Clone, Debug, PartialEq)]
+    struct Setting(u32);
+
     fn create_test_synchronizer() -> Synchronizer {
         let mut synchronizer = Synchronizer::new();
         synchronizer.register_component::<Marker>();
         synchronizer.register_component::<Value>();
+        synchronizer.register_resource::<Setting>();
         synchronizer
     }
 
@@ -189,6 +204,7 @@ mod tests {
         let mut source = World::new();
         let marked = source.spawn((Marker, Value(1))).id();
         let unmarked = source.spawn(Value(2)).id();
+        source.insert_resource(Setting(3));
 
         let synchronizer = create_test_synchronizer();
         let mut target = World::new();
@@ -199,6 +215,11 @@ mod tests {
             vec![Some(&Value(1)), Some(&Value(2))],
             "All entities with registered components should be synchronized."
         );
+        assert_eq!(
+            target.get_resource::<Setting>(),
+            Some(&Setting(3)),
+            "A registered resource should be synchronized."
+        );
     }
 
     #[test]
@@ -206,6 +227,7 @@ mod tests {
         let mut source = World::new();
         let marked = source.spawn((Marker, Value(1))).id();
         let unmarked = source.spawn(Value(2)).id();
+        source.insert_resource(Setting(3));
 
         let synchronizer = create_test_synchronizer();
         let mut target = World::new();
@@ -221,6 +243,11 @@ mod tests {
             None,
             "An entity without a marker component should not be synchronized."
         );
+        assert_eq!(
+            target.get_resource::<Setting>(),
+            Some(&Setting(3)),
+            "A registered resource should be synchronized regardless of the entity marker filter."
+        );
     }
 
     #[test]
@@ -229,13 +256,11 @@ mod tests {
         struct Config;
 
         let mut synchronizer = Synchronizer::new();
-        synchronizer.register_component::<Marker>();
         for _ in 0..2 {
             synchronizer.register_component::<Value>();
             synchronizer.register_resource::<Config>();
         }
-
-        assert_eq!(synchronizer.component_synchronizers.len(), 2);
+        assert_eq!(synchronizer.component_synchronizers.len(), 1);
         assert_eq!(synchronizer.resource_synchronizers.len(), 1);
     }
 
@@ -244,6 +269,7 @@ mod tests {
         let mut source = World::new();
         let marked = source.spawn((Marker, Value(1))).id();
         source.spawn(Value(2));
+        source.insert_resource(Setting(3));
 
         let synchronizer = create_test_synchronizer();
 
@@ -257,6 +283,11 @@ mod tests {
             target.iter_entities().count(),
             1,
             "Only the marked entity should survive the round trip."
+        );
+        assert_eq!(
+            target.get_resource::<Setting>(),
+            Some(&Setting(3)),
+            "The registered resource should survive the round trip."
         );
     }
 }
