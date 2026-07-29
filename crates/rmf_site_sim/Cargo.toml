@@ -9,10 +9,22 @@ repository = "https://github.com/open-rmf/rmf_site"
 
 [dependencies]
 bevy = { workspace = true, features = ["dynamic_linking"] }
-bevy_egui = { workspace = true }
+bevy_egui = { workspace = true, optional = true }
 crossbeam-channel = { workspace = true }
+rmf_site_egui = { workspace = true, optional = true }
+rmf_site_format = { workspace = true, features = ["bevy"], optional = true }
+
+[features]
+default = []
+egui = ["dep:bevy_egui"]
+rmf_site_egui = ["egui", "dep:rmf_site_egui", "dep:rmf_site_format"]
 
 [dev-dependencies]
 rand = "0.8"
 rmf_site_editor = { workspace = true }
 rmf_site_egui = { workspace = true }
+rmf_site_sim = { path = ".", features = ["rmf_site_egui"] }
+
+[[example]]
+name = "rmf_site_editor"
+required-features = ["rmf_site_egui"]
