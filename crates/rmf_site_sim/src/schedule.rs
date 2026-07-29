@@ -16,21 +16,23 @@ pub struct SimulationStartup;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
 pub struct SimulationSystemExec;
 
-/// The schedule run in the main world to visualize a simulation while it is the active playback
-/// simulation.
+/// The schedule run in the main world to visualize a simulation while it is the
+/// active playback simulation.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
 pub struct SimulationVisualize;
 
 #[derive(Default, Clone)]
 pub enum SystemExecutionOrdering {
-    /// Systems may run in any order based on dependencies and user-defined ordering constraints.
+    /// Systems may run in any order based on dependencies and user-defined
+    /// ordering constraints.
     #[default]
     Partial,
     /// A deterministic total order is enforced.
     Total,
 }
 
-/// Builds a [`Schedule`] with a set of systems and an execution ordering policy.
+/// Builds a [`Schedule`] with a set of systems and an execution ordering
+/// policy.
 pub struct ScheduleBuilder {
     label: InternedScheduleLabel,
     configs: Option<ScheduleConfigs<ScheduleSystem>>,
@@ -72,7 +74,8 @@ impl ScheduleBuilder {
         self
     }
 
-    /// Builds a new [`Schedule`] containing the added systems, ordered by the configured policy.
+    /// Builds a new [`Schedule`] containing the added systems, ordered by the
+    /// configured policy.
     pub fn build(self) -> Schedule {
         let mut schedule = Schedule::new(self.label);
         if let Some(configs) = self.configs {
@@ -99,7 +102,8 @@ impl ScheduleBuilder {
     }
 }
 
-/// A schedule build pass that enforces a deterministic total ordering of systems.
+/// A schedule build pass that enforces a deterministic total ordering of
+/// systems.
 #[derive(Debug, Default)]
 struct TotalOrderingBuildPass {
     added_system_type_ids: HashSet<TypeId>,
@@ -120,7 +124,8 @@ impl ScheduleBuildPass for TotalOrderingBuildPass {
         std::iter::empty()
     }
 
-    // TODO(@reuben-thomas): Toposort for each ScheduleGraph::conflicting_systems set
+    // TODO(@reuben-thomas): Toposort for each ScheduleGraph::conflicting_systems
+    // set
     fn build(
         &mut self,
         _world: &mut World,

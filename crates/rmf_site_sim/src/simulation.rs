@@ -1,5 +1,5 @@
 use crate::compute::compute_async;
-use crate::event::DiscreteEvent;
+use crate::event::DynDiscreteEvent;
 use crate::schedule::{
     ScheduleBuilder, SimulationStartup, SimulationSystemExec, SimulationVisualize,
     SystemExecutionOrdering,
@@ -44,8 +44,9 @@ impl<M: Component + Clone> Default for SimulationBuilder<M> {
 
 /// Builder for creating a [`Simulation`].
 ///
-/// All registered resources and components, as well as their corresponding entities with the
-/// marker component `M` are extracted into the simulation world.
+/// All registered resources and components, as well as their corresponding
+/// entities with the marker component `M` are extracted into the simulation
+/// world.
 impl<M: Component + Clone> SimulationBuilder<M> {
     pub fn new() -> Self {
         let mut synchronizer = Synchronizer::new();
@@ -100,7 +101,8 @@ impl<M: Component + Clone> SimulationBuilder<M> {
         self
     }
 
-    /// Adds a set of systems to be run in the main world, while this simulation is being played back.
+    /// Adds a set of systems to be run in the main world, while this simulation
+    /// is being played back.
     pub fn add_visualization_systems<S>(
         mut self,
         systems: impl IntoScheduleConfigs<ScheduleSystem, S>,
@@ -128,7 +130,8 @@ pub struct Simulation {
 }
 
 impl Simulation {
-    // TODO(@reuben-thomas): Should extract be performed explicitly? e.g. Simulation::extract, Simulation::compute
+    // TODO(@reuben-thomas): Should extract be performed explicitly? e.g.
+    // Simulation::extract, Simulation::compute
     fn new<M: Component + Clone>(builder: SimulationBuilder<M>, world: &World) -> Self {
         let (sender, receiver) = unbounded();
         compute_async(
@@ -180,7 +183,8 @@ impl Simulation {
         &self.simulation_steps
     }
 
-    /// The elapsed time of the last computed step, or zero when no steps have been computed yet.
+    /// The elapsed time of the last computed step, or zero when no steps have
+    /// been computed yet.
     pub fn duration(&self) -> Duration {
         self.simulation_steps
             .keys()
@@ -190,7 +194,8 @@ impl Simulation {
             .elapsed()
     }
 
-    // TODO(@reuben-thomas): Time bound this system in order to avoid delaying the main app.
+    // TODO(@reuben-thomas): Time bound this system in order to avoid delaying the
+    // main app.
     /// Applies [`StateUpdate`]s received from the compute task.
     fn process_updates(mut simulations: Query<&mut Simulation>) {
         for mut simulation in &mut simulations {
@@ -220,14 +225,29 @@ pub enum SimulationComputeState {
 /// A single computed simulation step.
 #[derive(Clone)]
 pub struct SimulationStep {
-    pub events: Vec<Box<dyn DiscreteEvent>>,
+    events: Vec<Box<dyn DynDiscreteEvent>>,
 }
 
 impl SimulationStep {
+    /// Creates a new [`SimulationStep`] from a vector of events.
+    pub fn new(events: Vec<Box<dyn DynDiscreteEvent>>) -> Self {
+        Self { events }
+    }
+
     pub fn apply(self, world: &mut World) {
         for event in self.events {
             event.apply(world);
         }
+    }
+
+    /// The number of events executed in this step.
+    pub fn event_count(&self) -> usize {
+        self.events.len()
+    }
+
+    /// Each event executed in this step, in execution order.
+    pub fn events(&self) -> impl Iterator<Item = &dyn DynDiscreteEvent> + '_ {
+        self.events.iter().map(|event| event.as_ref())
     }
 }
 

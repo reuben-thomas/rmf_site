@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
-*/
+ */
 
 //! # `rmf_site_sim`
 //!
@@ -21,8 +21,8 @@
 //! [discrete-event simulation](https://en.wikipedia.org/wiki/Discrete-event_simulation) (DES) in Bevy,
 //! and is primarily intended for use with the [rmf_site_editor](https://github.com/open-rmf/rmf_site).
 //!
-//! The following illustrates how the core components of a DES are represented, or can be accessd in
-//! this library.
+//! The following illustrates how the core components of a DES are represented,
+//! or can be accessd in this library.
 //!
 //! | Concept | Definition | Representation |
 //! | --- | --- | --- |

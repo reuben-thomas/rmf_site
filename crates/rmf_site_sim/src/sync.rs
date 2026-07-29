@@ -1,5 +1,5 @@
 use crate::compute::SimulationComputeClock;
-use crate::event::DiscreteEvent;
+use crate::event::DynDiscreteEvent;
 use crate::simulation::{SimulationComputeUpdate, SimulationStep};
 use crate::time::SimulationTime;
 use bevy::ecs::component::ComponentId;
@@ -8,7 +8,8 @@ use bevy::utils::TypeIdMap;
 use crossbeam_channel::Sender;
 use std::any::TypeId;
 
-/// Synchronizes entities, components, and resources from a source world into a target world.
+/// Synchronizes entities, components, and resources from a source world into a
+/// target world.
 #[derive(Clone, Default)]
 pub struct Synchronizer {
     component_synchronizers: TypeIdMap<fn(&World, &mut World, Option<ComponentId>)>,
@@ -130,17 +131,18 @@ impl StateUpdateSender {
     }
 }
 
-/// A buffer to store the [`DiscreteEvent`]s executed in the current step,
-/// sent to the main world as a single [`SimulationStep`].
+/// A buffer to store the [`DiscreteEvent`](crate::event::DiscreteEvent)s
+/// executed in the current step, sent to the main world as a single
+/// [`SimulationStep`].
 #[derive(Resource, Default)]
-pub struct SimulationEventBuffer(Vec<Box<dyn DiscreteEvent>>);
+pub struct SimulationEventBuffer(Vec<Box<dyn DynDiscreteEvent>>);
 
 impl SimulationEventBuffer {
-    pub fn extend(&mut self, events: impl IntoIterator<Item = Box<dyn DiscreteEvent>>) {
+    pub(crate) fn extend(&mut self, events: impl IntoIterator<Item = Box<dyn DynDiscreteEvent>>) {
         self.0.extend(events);
     }
 
-    fn take(&mut self) -> Vec<Box<dyn DiscreteEvent>> {
+    fn take(&mut self) -> Vec<Box<dyn DynDiscreteEvent>> {
         std::mem::take(&mut self.0)
     }
 
@@ -154,12 +156,12 @@ impl SimulationEventBuffer {
             return;
         }
 
-        sender.send(clock.now(), SimulationStep { events });
+        sender.send(clock.now(), SimulationStep::new(events));
     }
 }
 
-// TODO(@reuben-thomas): This method is only in newer versions of Bevy, this is a workaround.
-// https://docs.rs/bevy/latest/bevy/prelude/struct.World.html#method.spawn_at
+// TODO(@reuben-thomas): This method is only in newer versions of Bevy, this is
+// a workaround. https://docs.rs/bevy/latest/bevy/prelude/struct.World.html#method.spawn_at
 pub fn spawn_at(world: &mut World, entity: Entity) {
     #[allow(deprecated)]
     let _ = world.insert_or_spawn_batch([(entity, ())]);
