@@ -68,8 +68,8 @@ impl CandidateDiscreteEvents {
         }
     }
 
-    /// Propose that a discrete event might occur at a time in the future.
-    fn propose(
+    /// Queue a discrete event that might occur at a time in the future.
+    fn queue(
         &mut self,
         now: SimulationTime,
         event_time: SimulationTime,
@@ -112,6 +112,19 @@ impl CandidateDiscreteEvents {
     }
 }
 
+impl SystemBuffer for CandidateDiscreteEvents {
+    fn apply(&mut self, _system_meta: &SystemMeta, world: &mut World) {
+        if self.is_empty() {
+            return;
+        }
+        let buffered = std::mem::take(self);
+        let mut events = world.resource_mut::<CandidateDiscreteEvents>();
+        for (time, buffered_events) in buffered.0 {
+            events.0.entry(time).or_default().extend(buffered_events);
+        }
+    }
+}
+
 /// Writes [`DiscreteEvent`]s.
 ///
 /// In most cases, you should use [`DiscreteComponentWriter`] or
@@ -119,7 +132,7 @@ impl CandidateDiscreteEvents {
 /// [`DiscreteEvent`] struct.
 #[derive(SystemParam)]
 pub struct DiscreteChangeWriter<'w, 's> {
-    buffer: Deferred<'s, DiscreteEventBuffer>,
+    buffer: Deferred<'s, CandidateDiscreteEvents>,
     clock: Res<'w, SimulationComputeClock>,
 }
 
@@ -136,7 +149,7 @@ impl DiscreteChangeWriter<'_, '_> {
 /// Writes a component updates as a discrete event.
 #[derive(SystemParam)]
 pub struct DiscreteComponentWriter<'w, 's, T: Component + Clone + Debug> {
-    buffer: Deferred<'s, DiscreteEventBuffer>,
+    buffer: Deferred<'s, CandidateDiscreteEvents>,
     clock: Res<'w, SimulationComputeClock>,
     _marker: PhantomData<T>,
 }
@@ -171,7 +184,7 @@ impl<T: Component + Clone + Debug> Command for DiscreteComponentWrite<T> {
 /// Writes a resource updates as a discrete event.
 #[derive(SystemParam)]
 pub struct DiscreteResourceWriter<'w, 's, R: Resource + Clone + Debug> {
-    buffer: Deferred<'s, DiscreteEventBuffer>,
+    buffer: Deferred<'s, CandidateDiscreteEvents>,
     clock: Res<'w, SimulationComputeClock>,
     _marker: PhantomData<R>,
 }
@@ -199,32 +212,5 @@ struct DiscreteResourceWrite<R: Resource + Clone + Debug> {
 impl<R: Resource + Clone + Debug> Command for DiscreteResourceWrite<R> {
     fn apply(self, world: &mut World) {
         world.insert_resource(self.value);
-    }
-}
-
-#[derive(Default)]
-pub struct DiscreteEventBuffer(CandidateDiscreteEvents);
-
-impl DiscreteEventBuffer {
-    fn queue(
-        &mut self,
-        now: SimulationTime,
-        time: SimulationTime,
-        event: Box<dyn DynDiscreteEvent>,
-    ) {
-        self.0.propose(now, time, event);
-    }
-}
-
-impl SystemBuffer for DiscreteEventBuffer {
-    fn apply(&mut self, _system_meta: &SystemMeta, world: &mut World) {
-        if self.0.is_empty() {
-            return;
-        }
-        let buffered = std::mem::take(&mut self.0);
-        let mut events = world.resource_mut::<CandidateDiscreteEvents>();
-        for (time, buffered_events) in buffered.0 {
-            events.0.entry(time).or_default().extend(buffered_events);
-        }
     }
 }
