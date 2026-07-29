@@ -112,6 +112,11 @@ impl CandidateDiscreteEvents {
     }
 }
 
+/// Writes [`DiscreteEvent`]s.
+///
+/// In most cases, you should use [`DiscreteComponentWriter`] or
+/// [`DiscreteResourceWriter`] if you do not wish to implement a
+/// [`DiscreteEvent`] struct.
 #[derive(SystemParam)]
 pub struct DiscreteChangeWriter<'w, 's> {
     buffer: Deferred<'s, DiscreteEventBuffer>,
@@ -128,6 +133,7 @@ impl DiscreteChangeWriter<'_, '_> {
     }
 }
 
+/// Writes a component updates as a discrete event.
 #[derive(SystemParam)]
 pub struct DiscreteComponentWriter<'w, 's, T: Component + Clone + Debug> {
     buffer: Deferred<'s, DiscreteEventBuffer>,
@@ -162,6 +168,7 @@ impl<T: Component + Clone + Debug> Command for DiscreteComponentWrite<T> {
     }
 }
 
+/// Writes a resource updates as a discrete event.
 #[derive(SystemParam)]
 pub struct DiscreteResourceWriter<'w, 's, R: Resource + Clone + Debug> {
     buffer: Deferred<'s, DiscreteEventBuffer>,
