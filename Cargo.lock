@@ -5808,6 +5808,7 @@ dependencies = [
  "bevy",
  "bevy_egui",
  "crossbeam-channel",
+ "mapf",
  "rand",
  "rmf_site_editor",
  "rmf_site_egui",

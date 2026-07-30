@@ -1,15 +1,93 @@
 use crate::event::DynDiscreteEvent;
 use crate::playback::{
     PLAYBACK_SPEED_RANGE, SeekDirection, SimulationActivePlaybackView, SimulationPlaybackCommand,
-    SimulationPlaybackSeek,
+    SimulationPlaybackSeek, SimulationReplayBehaviour,
 };
+use crate::simulation::{Simulation, SimulationComputeState, SimulationStep};
 use crate::time::SimulationTime;
 use bevy::prelude::*;
-use bevy_egui::egui;
+use bevy_egui::egui::{self, Color32};
+use std::collections::BTreeMap;
 use std::hash::Hash;
 use std::time::Duration;
 
-/// A menu to control play/pause, seeking to the next or previous event, or seeking to the start or end of the simulation.
+/// A dropdown menu for selecting or deselecting a simulation for playback.
+pub struct SimulationPlaybackSelector<'a> {
+    simulations: Vec<(Entity, &'a str)>,
+    active: Option<Entity>,
+}
+
+impl<'a> SimulationPlaybackSelector<'a> {
+    // TODO(@reuben-thomas): Should we allow playback for failed simulations?
+    pub fn new(
+        simulations: impl IntoIterator<Item = (Entity, &'a str)>,
+        active: Option<Entity>,
+    ) -> Self {
+        Self {
+            simulations: simulations.into_iter().collect(),
+            active,
+        }
+    }
+
+    pub fn show(self, ui: &mut egui::Ui, commands: &mut EventWriter<SimulationPlaybackCommand>) {
+        if self.simulations.is_empty() {
+            ui.label("No simulations available.");
+            return;
+        }
+
+        ui.horizontal(|ui| {
+            ui.label("Simulation:");
+            Self::show_selection_combo_box(ui, &self.simulations, self.active, commands);
+            Self::show_unset_button(ui, self.active, commands);
+        });
+    }
+
+    fn show_selection_combo_box(
+        ui: &mut egui::Ui,
+        simulations: &[(Entity, &'a str)],
+        active: Option<Entity>,
+        commands: &mut EventWriter<SimulationPlaybackCommand>,
+    ) {
+        let mut selection = active;
+        egui::ComboBox::from_id_salt("active_playback_simulation")
+            .selected_text(Self::selected_text(simulations, active))
+            .show_ui(ui, |ui| {
+                for (entity, name) in simulations {
+                    ui.selectable_value(&mut selection, Some(*entity), *name);
+                }
+            });
+
+        if selection != active {
+            commands.write(SimulationPlaybackCommand::SetActiveSimulation(selection));
+        }
+    }
+
+    fn selected_text(simulations: &[(Entity, &'a str)], active: Option<Entity>) -> &'a str {
+        let Some(active) = active else {
+            return "Select a simulation...";
+        };
+
+        simulations
+            .iter()
+            .find(|(entity, _)| *entity == active)
+            .map(|(_, name)| *name)
+            .expect("Active simulation not found.")
+    }
+
+    fn show_unset_button(
+        ui: &mut egui::Ui,
+        active: Option<Entity>,
+        commands: &mut EventWriter<SimulationPlaybackCommand>,
+    ) {
+        ui.add_enabled_ui(active.is_some(), |ui| {
+            if ui.button("❌").on_hover_text("Unload").clicked() {
+                commands.write(SimulationPlaybackCommand::SetActiveSimulation(None));
+            }
+        });
+    }
+}
+
+/// A menu for controlling simulation playback with a timeline.
 pub struct SimulationPlaybackMenu<'a> {
     view: SimulationActivePlaybackView<'a>,
 }
@@ -21,26 +99,40 @@ impl<'a> SimulationPlaybackMenu<'a> {
 
     pub fn show(self, ui: &mut egui::Ui, commands: &mut EventWriter<SimulationPlaybackCommand>) {
         let view = self.view;
+        Self::show_control_button_row(ui, view, commands);
+        Self::show_replay_behaviour_control(ui, view, commands);
+        Self::show_timeline(ui, view, commands);
+    }
+
+    /// A row of buttons to control play/pause, start/end, and stepping through the simulation.
+    fn show_control_button_row(
+        ui: &mut egui::Ui,
+        view: SimulationActivePlaybackView,
+        commands: &mut EventWriter<SimulationPlaybackCommand>,
+    ) {
+        let can_revert = !view.playback.at_start();
+        let can_advance = !view.at_last_available();
+
         ui.horizontal(|ui| {
-            if ui
-                .add_enabled(!view.playback.at_start(), egui::Button::new("Start"))
-                .on_hover_text("Seek to start")
-                .clicked()
-            {
-                commands.write(SimulationPlaybackCommand::SeekToStart);
-            }
-            if ui
-                .add_enabled(!view.playback.at_start(), egui::Button::new("Previous"))
-                .on_hover_text("Step backwards")
-                .clicked()
-            {
-                commands.write(SimulationPlaybackCommand::Seek(
-                    SimulationPlaybackSeek::StepDelta {
-                        steps: 1,
-                        direction: SeekDirection::Revert,
-                    },
-                ));
-            }
+            Self::show_command_button(
+                ui,
+                can_revert,
+                "Start",
+                "Seek to start",
+                SimulationPlaybackCommand::SeekToStart,
+                commands,
+            );
+            Self::show_command_button(
+                ui,
+                can_revert,
+                "Previous",
+                "Step backwards",
+                SimulationPlaybackCommand::Seek(SimulationPlaybackSeek::StepDelta {
+                    steps: 1,
+                    direction: SeekDirection::Revert,
+                }),
+                commands,
+            );
             if ui
                 .button(if view.playback.is_playing() {
                     "Pause"
@@ -51,57 +143,108 @@ impl<'a> SimulationPlaybackMenu<'a> {
             {
                 commands.write(SimulationPlaybackCommand::TogglePlayPause);
             }
-            if ui
-                .add_enabled(!view.at_last_available(), egui::Button::new("Next"))
-                .on_hover_text("Step forwards")
-                .clicked()
-            {
-                commands.write(SimulationPlaybackCommand::Seek(
-                    SimulationPlaybackSeek::StepDelta {
-                        steps: 1,
-                        direction: SeekDirection::Advance,
-                    },
-                ));
-            }
-            if ui
-                .add_enabled(!view.at_last_available(), egui::Button::new("End"))
-                .on_hover_text("Seek to end")
-                .clicked()
-            {
-                commands.write(SimulationPlaybackCommand::SeekToLast);
-            }
-
-            let mut speed = view.playback.speed;
-            let speed_changed = ui
-                .add(
-                    egui::DragValue::new(&mut speed)
-                        .range(PLAYBACK_SPEED_RANGE)
-                        .speed(0.1)
-                        .suffix("x"),
-                )
-                .on_hover_text("Playback speed")
-                .changed();
-            if speed_changed {
-                commands.write(SimulationPlaybackCommand::SetSpeed(speed));
-            }
+            Self::show_command_button(
+                ui,
+                can_advance,
+                "Next",
+                "Step forwards",
+                SimulationPlaybackCommand::Seek(SimulationPlaybackSeek::StepDelta {
+                    steps: 1,
+                    direction: SeekDirection::Advance,
+                }),
+                commands,
+            );
+            Self::show_command_button(
+                ui,
+                can_advance,
+                "End",
+                "Seek to end",
+                SimulationPlaybackCommand::SeekToLast,
+                commands,
+            );
+            Self::show_speed_drag_value(ui, view.playback.speed, commands);
         });
     }
-}
 
-/// A scrubbable slider spanning the computed duration of the simulation.
-pub struct SimulationPlaybackTimeline<'a> {
-    view: SimulationActivePlaybackView<'a>,
-}
-
-impl<'a> SimulationPlaybackTimeline<'a> {
-    pub fn new(view: SimulationActivePlaybackView<'a>) -> Self {
-        Self { view }
+    fn show_command_button(
+        ui: &mut egui::Ui,
+        enabled: bool,
+        label: &str,
+        hover_text: &str,
+        command: SimulationPlaybackCommand,
+        commands: &mut EventWriter<SimulationPlaybackCommand>,
+    ) {
+        if ui
+            .add_enabled(enabled, egui::Button::new(label))
+            .on_hover_text(hover_text)
+            .clicked()
+        {
+            commands.write(command);
+        }
     }
 
-    /// Shows the slider, writing a seek to `commands` when the user scrubs it.
-    pub fn show(self, ui: &mut egui::Ui, commands: &mut EventWriter<SimulationPlaybackCommand>) {
-        let end_secs = self.view.simulation.duration().as_secs_f64();
-        let mut changed_secs = self.view.playback.time.elapsed().as_secs_f64();
+    fn show_speed_drag_value(
+        ui: &mut egui::Ui,
+        speed: f32,
+        commands: &mut EventWriter<SimulationPlaybackCommand>,
+    ) {
+        let mut speed = speed;
+        let changed = ui
+            .add(
+                egui::DragValue::new(&mut speed)
+                    .range(PLAYBACK_SPEED_RANGE)
+                    .speed(0.1)
+                    .suffix("x"),
+            )
+            .on_hover_text("Playback speed")
+            .changed();
+        if changed {
+            commands.write(SimulationPlaybackCommand::SetSpeed(speed));
+        }
+    }
+
+    /// Show a menu to toggle replay behaviour, and configure pause duration.
+    fn show_replay_behaviour_control(
+        ui: &mut egui::Ui,
+        view: SimulationActivePlaybackView,
+        commands: &mut EventWriter<SimulationPlaybackCommand>,
+    ) {
+        let SimulationReplayBehaviour(pause) = view.playback.replay_behaviour;
+        let mut replay = pause.is_some();
+        let mut pause_secs = pause.unwrap_or_default().as_secs_f32();
+
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            changed |= ui.checkbox(&mut replay, "Loop on Completion").changed();
+            if replay {
+                changed |= ui
+                    .add(
+                        egui::DragValue::new(&mut pause_secs)
+                            .range(0.0_f32..=10.0)
+                            .speed(0.1)
+                            .suffix("s"),
+                    )
+                    .on_hover_text("Pause before replaying")
+                    .changed();
+            }
+        });
+
+        if changed {
+            commands.write(SimulationPlaybackCommand::SetReplayBehaviour(
+                SimulationReplayBehaviour(replay.then(|| Duration::from_secs_f32(pause_secs))),
+            ));
+        }
+    }
+
+    /// Show a slider timeline to control the current playback position.
+    fn show_timeline(
+        ui: &mut egui::Ui,
+        view: SimulationActivePlaybackView,
+        commands: &mut EventWriter<SimulationPlaybackCommand>,
+    ) {
+        let total = view.simulation.duration();
+        let end_secs = total.as_secs_f64();
+        let mut changed_secs = view.playback.time.elapsed().as_secs_f64();
         let mut changed = false;
 
         ui.scope(|ui| {
@@ -115,6 +258,13 @@ impl<'a> SimulationPlaybackTimeline<'a> {
                 .changed();
         });
 
+        let elapsed = Duration::from_secs_f64(changed_secs.clamp(0.0, end_secs));
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.monospace(format!("{elapsed:.2?}/{total:.2?}"));
+            });
+        });
+
         if changed {
             commands.write(SimulationPlaybackCommand::Seek(
                 SimulationPlaybackSeek::Time {
@@ -125,22 +275,14 @@ impl<'a> SimulationPlaybackTimeline<'a> {
     }
 }
 
+/// A table for visualizing and seeking to events in the active simulation playback.
 pub struct SimulationPlaybackEventTable<'a> {
     view: SimulationActivePlaybackView<'a>,
-    max_height: f32,
 }
 
 impl<'a> SimulationPlaybackEventTable<'a> {
     pub fn new(view: SimulationActivePlaybackView<'a>) -> Self {
-        Self {
-            view,
-            max_height: 300.0,
-        }
-    }
-
-    pub fn max_height(mut self, max_height: f32) -> Self {
-        self.max_height = max_height;
-        self
+        Self { view }
     }
 
     pub fn show(self, ui: &mut egui::Ui, commands: &mut EventWriter<SimulationPlaybackCommand>) {
@@ -150,67 +292,144 @@ impl<'a> SimulationPlaybackEventTable<'a> {
             return;
         }
 
-        let applied_steps = self.view.playback.applied_steps;
+        Self::show_steps(ui, steps, self.view.playback.applied_steps, commands);
+    }
 
-        egui::ScrollArea::vertical()
-            .id_salt("simulation_playback_event_table")
-            .max_height(self.max_height)
-            .auto_shrink([false, true])
+    fn show_steps(
+        ui: &mut egui::Ui,
+        steps: &BTreeMap<SimulationTime, SimulationStep>,
+        applied_steps: usize,
+        commands: &mut EventWriter<SimulationPlaybackCommand>,
+    ) {
+        egui::Grid::new("simulation_playback_event_table_grid")
+            .num_columns(2)
+            .striped(true)
             .show(ui, |ui| {
-                egui::Grid::new("simulation_playback_event_table_grid")
-                    .num_columns(2)
-                    .striped(true)
-                    .show(ui, |ui| {
-                        ui.strong("Time");
-                        ui.strong("Step");
-                        ui.end_row();
+                ui.strong("Time");
+                ui.strong("Step");
+                ui.end_row();
 
-                        for (index, (time, step)) in steps.iter().enumerate() {
-                            let is_current = applied_steps > 0 && index == applied_steps - 1;
+                for (index, (time, step)) in steps.iter().enumerate() {
+                    let is_current = applied_steps > 0 && index == applied_steps - 1;
 
-                            let response = ui.selectable_label(
-                                is_current,
-                                egui::RichText::new(format!("{:?}", time.elapsed())).monospace(),
-                            );
-                            if response.clicked() {
-                                commands.write(SimulationPlaybackCommand::Seek(
-                                    SimulationPlaybackSeek::Step {
-                                        applied_steps: index + 1,
-                                    },
-                                ));
-                            }
-                            if is_current {
-                                response.scroll_to_me(Some(egui::Align::Center));
-                            }
+                    Self::show_step_time(ui, index, *time, is_current, commands);
+                    Self::show_step_events(ui, index, step);
+                    ui.end_row();
+                }
+            });
+    }
 
-                            let event_count = step.event_count();
-                            if event_count == 1 {
-                                // A lone event stands in for the step, without a grouping header.
-                                if let Some(event) = step.events().next() {
-                                    show_event(ui, index, event);
-                                }
-                            } else {
-                                egui::CollapsingHeader::new(format!("{event_count} Events"))
-                                    .id_salt(index)
-                                    .show(ui, |ui| {
-                                        for (event_index, event) in step.events().enumerate() {
-                                            show_event(ui, (index, event_index), event);
-                                        }
-                                    });
-                            }
-                            ui.end_row();
-                        }
-                    });
+    fn show_step_time(
+        ui: &mut egui::Ui,
+        index: usize,
+        time: SimulationTime,
+        is_current: bool,
+        commands: &mut EventWriter<SimulationPlaybackCommand>,
+    ) {
+        let response = ui.selectable_label(
+            is_current,
+            egui::RichText::new(format!("{:.2?}", time.elapsed())).monospace(),
+        );
+        if response.clicked() {
+            commands.write(SimulationPlaybackCommand::Seek(
+                SimulationPlaybackSeek::Step {
+                    applied_steps: index + 1,
+                },
+            ));
+        }
+
+        // TODO(@reuben-thomas): Should the user be allowed to detatch from following the active event?
+        // Maintain a following state, that is unset when the user scrolls out, prompting a reset button to appear.
+        if is_current {
+            response.scroll_to_me(Some(egui::Align::Center));
+        }
+    }
+
+    fn show_step_events(ui: &mut egui::Ui, index: usize, step: &SimulationStep) {
+        let event_count = step.event_count();
+        if event_count == 1 {
+            if let Some(event) = step.events().next() {
+                Self::show_event(ui, index, event);
+            }
+            return;
+        }
+
+        egui::CollapsingHeader::new(format!("{event_count} Events"))
+            .id_salt(index)
+            .show(ui, |ui| {
+                for (event_index, event) in step.events().enumerate() {
+                    Self::show_event(ui, (index, event_index), event);
+                }
+            });
+    }
+
+    fn show_event(ui: &mut egui::Ui, id_salt: impl Hash, event: &dyn DynDiscreteEvent) {
+        egui::CollapsingHeader::new(event.name())
+            .id_salt(id_salt)
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new(format!("{event:#?}")).monospace());
             });
     }
 }
 
-/// Shows one event as a collapsible header naming its kind, revealing the
-/// values it carries.
-fn show_event(ui: &mut egui::Ui, id_salt: impl Hash, event: &dyn DynDiscreteEvent) {
-    egui::CollapsingHeader::new(event.name())
-        .id_salt(id_salt)
-        .show(ui, |ui| {
-            ui.label(egui::RichText::new(format!("{event:#?}")).monospace());
+/// An overview pane of all simulations within the world.
+pub struct SimulationOverview<'a> {
+    simulations: Vec<(Entity, &'a str, &'a Simulation)>,
+}
+
+impl<'a> SimulationOverview<'a> {
+    pub fn new(simulations: impl IntoIterator<Item = (Entity, &'a str, &'a Simulation)>) -> Self {
+        Self {
+            simulations: simulations.into_iter().collect(),
+        }
+    }
+
+    pub fn show(self, ui: &mut egui::Ui) {
+        let simulations = self.simulations;
+        if simulations.is_empty() {
+            ui.label("No simulations available.");
+            return;
+        }
+
+        for (entity, name, simulation) in simulations {
+            ui.push_id(entity, |ui| {
+                Self::show_simulation(ui, name, simulation);
+            });
+        }
+    }
+
+    fn show_simulation(ui: &mut egui::Ui, name: &str, simulation: &Simulation) {
+        let (state, color) = Self::compute_state_label(simulation.state());
+
+        ui.horizontal(|ui| {
+            ui.strong(name);
+            ui.colored_label(color, state);
         });
+        ui.collapsing("Details", |ui| {
+            Self::show_details(ui, simulation);
+        });
+    }
+
+    fn show_details(ui: &mut egui::Ui, simulation: &Simulation) {
+        let steps = simulation.steps();
+        let event_count: usize = steps.values().map(|step| step.event_count()).sum();
+
+        ui.label(format!(
+            "Extracted entities: {}",
+            simulation.init_state().0.entities().len()
+        ));
+        ui.label(format!("Steps: {}", steps.len()));
+        ui.label(format!("Events: {event_count}"));
+        if !steps.is_empty() {
+            ui.label(format!("Duration: {:.2?}", simulation.duration()));
+        }
+    }
+
+    fn compute_state_label(state: SimulationComputeState) -> (&'static str, egui::Color32) {
+        match state {
+            SimulationComputeState::Computing => ("Computing", Color32::ORANGE),
+            SimulationComputeState::Complete => ("Computed", Color32::GREEN),
+            SimulationComputeState::Failed => ("Failed", Color32::RED),
+        }
+    }
 }

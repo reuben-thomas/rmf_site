@@ -29,8 +29,9 @@ impl Plugin for SimulationPlaybackPlugin {
     }
 }
 
-// TODO(@reuben-thomas): Should something similar be configurable at runtime? We
-// may have high or low frequency event simulations.
+// TODO(@reuben-thomas): Should something similar be configurable at runtime?
+// We may have high or low frequency event simulations.
+// Another option would be constraining the range to maximum events / second, or maximum events / frame of 1 based on the active simulation.
 /// The allowed playback speed range.
 pub const PLAYBACK_SPEED_RANGE: RangeInclusive<f32> = 0.01..=100.0;
 
