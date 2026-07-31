@@ -1,16 +1,13 @@
-//! Playback of computed [`Simulation`] steps in the main world.
-
+use super::command::{
+    PLAYBACK_SPEED_RANGE, SeekDirection, SimulationPlaybackCommand, SimulationPlaybackSeek,
+    SimulationPlaybackSeekOutOfBounds, SimulationReplayBehaviour,
+};
 use crate::simulation::{Simulation, SimulationComputeState, SimulationState};
 use crate::sync::Synchronizer;
 use crate::time::{SimulationClock, SimulationTime};
 use bevy::ecs::event::EventCursor;
-use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use std::ops::RangeInclusive;
-use std::time::Duration;
 
-/// Plugin that applies computed [`Simulation`] steps to the main world over
-/// time.
 pub struct SimulationPlaybackPlugin;
 
 impl Plugin for SimulationPlaybackPlugin {
@@ -29,75 +26,6 @@ impl Plugin for SimulationPlaybackPlugin {
     }
 }
 
-// TODO(@reuben-thomas): Should something similar be configurable at runtime?
-// We may have high or low frequency event simulations.
-// Another option would be constraining the range to maximum events / second, or maximum events / frame of 1 based on the active simulation.
-/// The allowed playback speed range.
-pub const PLAYBACK_SPEED_RANGE: RangeInclusive<f32> = 0.01..=100.0;
-
-/// Commands for controlling playback of an active Simulation.
-#[derive(Event, Clone, Copy, Debug)]
-pub enum SimulationPlaybackCommand {
-    /// Selects a Simulation for playback.
-    SetActiveSimulation(Option<Entity>),
-    /// Plays from the current playback time, with the behaviour at end defined
-    /// by [`SimulationReplayBehaviour`].
-    Play,
-    /// Pauses at the current playback time.
-    Pause,
-    /// Plays if playback is paused, and pauses otherwise.
-    TogglePlayPause,
-    /// Sets the speed multiplier of playback, clamped to
-    /// [`PLAYBACK_SPEED_RANGE`].
-    SetSpeed(f32),
-    /// Seeks to the given target.
-    Seek(SimulationPlaybackSeek),
-    /// Seeks to the start of the simulation and pauses.
-    SeekToStart,
-    /// Seeks to the last computed step of the simulation and pauses.
-    SeekToLast,
-    /// Sets the behaviour of playback upon reaching the end of the active
-    /// simulation.
-    SetReplayBehaviour(SimulationReplayBehaviour),
-}
-
-/// A seek target for [`SimulationPlaybackCommand::Seek`].
-#[derive(Clone, Copy, Debug)]
-pub enum SimulationPlaybackSeek {
-    /// Seek to the very first step at or after the specified time.
-    Time { time: SimulationTime },
-    /// Seek so that exactly `applied_steps` steps have been applied.
-    Step { applied_steps: usize },
-    /// Seek by the given number of steps in the specified direction.
-    StepDelta {
-        steps: usize,
-        direction: SeekDirection,
-    },
-    /// Seek to the very first step at or after the time after the addition of
-    /// the duration offset.
-    TimeDelta {
-        duration: Duration,
-        direction: SeekDirection,
-    },
-    /// Seek to the last computed step.
-    End,
-}
-
-/// The direction to seek in [`SimulationPlaybackSeek`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SeekDirection {
-    Advance,
-    Revert,
-}
-
-/// The requested seek falls out of simulation's computed steps.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SimulationPlaybackSeekOutOfBounds;
-
-/// Behaviour of replay upon reaching the end of a simulation.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SimulationReplayBehaviour(pub Option<Duration>);
-
 /// The play/pause state of the active playback.
 #[derive(Clone, Debug, Default)]
 pub enum SimulationPlaybackState {
@@ -114,9 +42,9 @@ pub enum SimulationPlaybackState {
 pub struct SimulationPlayback(Option<SimulationActivePlayback>);
 
 impl SimulationPlayback {
-    /// The entity of the simulation currently being played back, if any.
-    pub fn active_simulation(&self) -> Option<Entity> {
-        self.0.as_ref().map(|active| active.simulation)
+    /// The active playback, if any.
+    pub(super) fn active_playback(&self) -> Option<&SimulationActivePlayback> {
+        self.0.as_ref()
     }
 
     /// Set a new active simulation.
@@ -199,7 +127,7 @@ impl SimulationPlayback {
     // access?
     /// Runs the active simulation's visualization schedule on the main world.
     fn visualize(world: &mut World) {
-        let Some(simulation_entity) = world.resource::<SimulationPlayback>().active_simulation()
+        let Some(simulation_entity) = world.resource::<SimulationPlayback>().active_playback().map(|s| s.simulation)
         else {
             return;
         };
@@ -476,49 +404,5 @@ impl SimulationActivePlayback {
         world
             .get::<Simulation>(self.simulation)
             .expect("Active simulation entity has no Simulation component")
-    }
-}
-
-/// A helper [`SystemParam`] to view the active playback and its corresponding
-/// simulation.
-#[derive(SystemParam)]
-pub struct SimulationPlaybackView<'w, 's> {
-    playback: Res<'w, SimulationPlayback>,
-    clock: Option<Res<'w, SimulationClock>>,
-    simulations: Query<'w, 's, &'static Simulation>,
-}
-
-impl SimulationPlaybackView<'_, '_> {
-    pub fn active(&self) -> Option<SimulationActivePlaybackView<'_>> {
-        let playback = self.playback.0.as_ref()?;
-        let simulation = self.simulations.get(playback.simulation).ok()?;
-        let clock = self.clock.as_ref()?;
-        Some(SimulationActivePlaybackView {
-            playback,
-            simulation,
-            time: clock.now(),
-        })
-    }
-}
-
-/// The active playback and its corresponding simulation.
-#[derive(Clone, Copy)]
-pub struct SimulationActivePlaybackView<'a> {
-    pub playback: &'a SimulationActivePlayback,
-    pub simulation: &'a Simulation,
-    pub time: SimulationTime,
-}
-
-impl SimulationActivePlaybackView<'_> {
-    /// Whether at the last available computed step, when computation of the
-    /// simulation has yet to complete.
-    pub fn at_last_available(&self) -> bool {
-        self.playback.at_last_available(self.simulation)
-    }
-
-    /// Whether at the end of a simulation that has finished computation, and
-    /// all available steps have been applied.
-    pub fn at_end(&self) -> bool {
-        self.playback.at_end(self.simulation)
     }
 }
