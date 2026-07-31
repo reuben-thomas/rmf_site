@@ -12,7 +12,7 @@ use rmf_site_egui::{
     Tile, ToolMenu, Widget, WidgetSystem, show_panel_of_tiles,
 };
 use rmf_site_sim::compute::SimulationComputeClock;
-use rmf_site_sim::event::DiscreteChangeWriter;
+use rmf_site_sim::event::CandidateEventWriter;
 use rmf_site_sim::interaction::rmf_site_egui::{
     SimulationOverviewTile, SimulationPlaybackTile, show_collapsible_section,
 };
@@ -252,7 +252,7 @@ mod simulation {
             .register_component::<Task>()
             .register_component::<TaskParams>()
             .register_component::<RequestStatus>()
-            .add_simulation_systems(request_generator)
+            .add_prediction_systems(request_generator)
             .build(world);
 
         for &entity in tasks {
@@ -267,7 +267,7 @@ mod simulation {
     pub fn request_generator(
         tasks: Query<(Entity, &TaskParams, &RequestStatus), With<Task>>,
         clock: Res<SimulationComputeClock>,
-        mut changes: DiscreteChangeWriter,
+        mut changes: CandidateEventWriter,
     ) {
         let now = clock.now();
         for (task, params, status) in tasks.iter() {
@@ -276,7 +276,7 @@ mod simulation {
             }
             let request_secs = params.request_time().unwrap_or(0).max(0) as u64;
             let time = SimulationTime::new(Duration::from_secs(request_secs)).max(now);
-            changes.write(time, RequestArrival { task });
+            changes.predict(time, RequestArrival { task });
         }
     }
 }

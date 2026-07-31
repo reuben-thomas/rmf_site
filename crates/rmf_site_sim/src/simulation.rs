@@ -1,7 +1,7 @@
 use crate::compute::compute_async;
 use crate::event::DynDiscreteEvent;
 use crate::schedule::{
-    ScheduleBuilder, SimulationStartup, SimulationSystemExec, SimulationVisualize,
+    ScheduleBuilder, SimulationStartup, SimulationPredict, SimulationVisualize,
     SystemExecutionOrdering,
 };
 use crate::sync::Synchronizer;
@@ -31,7 +31,7 @@ pub struct SimulationBuilder<M: Component + Clone> {
     synchronizer: Synchronizer,
     marker: PhantomData<M>,
     startup_schedule_builder: ScheduleBuilder,
-    system_schedule_builder: ScheduleBuilder,
+    prediction_schedule_builder: ScheduleBuilder,
     visualization_schedule_builder: ScheduleBuilder,
     plugins: Vec<SimulationPluginFactory>,
 }
@@ -54,7 +54,7 @@ impl<M: Component + Clone> SimulationBuilder<M> {
         Self {
             synchronizer,
             startup_schedule_builder: ScheduleBuilder::new(SimulationStartup),
-            system_schedule_builder: ScheduleBuilder::new(SimulationSystemExec)
+            prediction_schedule_builder: ScheduleBuilder::new(SimulationPredict)
                 .set_ordering(SystemExecutionOrdering::Total),
             visualization_schedule_builder: ScheduleBuilder::new(SimulationVisualize),
             plugins: Vec::new(),
@@ -92,12 +92,13 @@ impl<M: Component + Clone> SimulationBuilder<M> {
     }
 
     /// Adds a set of systems to be executed when computing simulation steps.
-    /// These systems should represent models in the discrete event simulation.
-    pub fn add_simulation_systems<S>(
+    /// These systems should represent models in the discrete event simulation,
+    /// predicting the events they believe should occur.
+    pub fn add_prediction_systems<S>(
         mut self,
         systems: impl IntoScheduleConfigs<ScheduleSystem, S>,
     ) -> Self {
-        self.system_schedule_builder = self.system_schedule_builder.add_systems(systems);
+        self.prediction_schedule_builder = self.prediction_schedule_builder.add_systems(systems);
         self
     }
 
@@ -137,7 +138,7 @@ impl Simulation {
         compute_async(
             SimulationState::extract_with::<M>(&builder.synchronizer, world),
             builder.startup_schedule_builder.build(),
-            builder.system_schedule_builder.build(),
+            builder.prediction_schedule_builder.build(),
             builder.plugins,
             builder.synchronizer.clone(),
             sender,

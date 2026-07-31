@@ -13,8 +13,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
 pub struct SimulationStartup;
 
+/// The schedule executing prediction systems that predict events based on the
+/// current state of the world.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
-pub struct SimulationSystemExec;
+pub struct SimulationPredict;
 
 /// The schedule run in the main world to visualize a simulation while it is the
 /// active playback simulation.
@@ -191,7 +193,7 @@ impl TotalOrderingBuildPass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::DiscreteChangeWriter;
+    use crate::event::CandidateEventWriter;
     use bevy::ecs::resource::Resource;
     use bevy::ecs::system::{IntoSystem, ResMut, System};
 
@@ -201,11 +203,11 @@ mod tests {
     #[derive(Resource, Default, Clone)]
     struct X<const N: usize>;
 
-    fn a(_x1: ResMut<X<1>>, _writer: DiscreteChangeWriter) {}
+    fn a(_x1: ResMut<X<1>>, _writer: CandidateEventWriter) {}
 
-    fn b(_x2: ResMut<X<2>>, _writer: DiscreteChangeWriter) {}
+    fn b(_x2: ResMut<X<2>>, _writer: CandidateEventWriter) {}
 
-    fn c(_x1: ResMut<X<1>>, _x2: ResMut<X<2>>, _writer: DiscreteChangeWriter) {}
+    fn c(_x1: ResMut<X<1>>, _x2: ResMut<X<2>>, _writer: CandidateEventWriter) {}
 
     fn get_system_name<M>(system: impl IntoSystem<(), (), M>) -> String {
         IntoSystem::into_system(system).name().to_string()

@@ -151,22 +151,20 @@ impl SimulationEventBuffer {
         self.0.extend(events);
     }
 
-    fn take(&mut self) -> Vec<Box<dyn DynDiscreteEvent>> {
-        std::mem::take(&mut self.0)
-    }
-
     /// System that sends the buffered events as one [`SimulationStep`], if any.
     pub fn send_step(
         clock: Res<SimulationComputeClock>,
         mut buffer: ResMut<Self>,
         sender: Res<StateUpdateSender>,
     ) {
-        let events = buffer.take();
-        if events.is_empty() {
+        if buffer.0.is_empty() {
             return;
         }
 
-        sender.send(clock.now(), SimulationStep::new(events));
+        sender.send(
+            clock.now(),
+            SimulationStep::new(buffer.0.drain(..).collect()),
+        );
     }
 }
 
