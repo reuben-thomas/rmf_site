@@ -20,7 +20,7 @@ mod sealed {
     pub trait Sealed {}
 }
 
-// TODO: Follow doc format specified in https://rust-lang.github.io/api-guidelines/future-proofing.html#sealed-traits-protect-against-downstream-implementations-c-sealed
+// TODO(@reuben-thomas): Follow doc format specified in https://rust-lang.github.io/api-guidelines/future-proofing.html#sealed-traits-protect-against-downstream-implementations-c-sealed
 impl<T: DiscreteEvent> sealed::Sealed for T {}
 
 pub trait DynDiscreteEvent: sealed::Sealed + Debug + Send + Sync + 'static {
@@ -68,8 +68,8 @@ impl CandidateDiscreteEvents {
         }
     }
 
-    /// Queue a discrete event that might occur at a time in the future.
-    fn queue(
+    /// Submit a discrete event that might occur at a time in the future.
+    fn submit(
         &mut self,
         now: SimulationTime,
         event_time: SimulationTime,
@@ -117,99 +117,98 @@ impl SystemBuffer for CandidateDiscreteEvents {
         if self.is_empty() {
             return;
         }
-        let buffered = std::mem::take(self);
         let mut events = world.resource_mut::<CandidateDiscreteEvents>();
-        for (time, buffered_events) in buffered.0 {
-            events.0.entry(time).or_default().extend(buffered_events);
+        while let Some((time, buffered)) = self.0.pop_first() {
+            events.0.entry(time).or_default().extend(buffered);
         }
     }
 }
 
-/// Writes [`DiscreteEvent`]s.
+/// Predicts [`DiscreteEvent`]s that may occur.
 ///
-/// In most cases, you should use [`DiscreteComponentWriter`] or
-/// [`DiscreteResourceWriter`] if you do not wish to implement a
+/// In most cases, you should use [`CandidateDiscreteComponentWriter`] or
+/// [`CandidateDiscreteResourceWriter`] if you do not wish to implement a
 /// [`DiscreteEvent`] struct.
 #[derive(SystemParam)]
-pub struct DiscreteChangeWriter<'w, 's> {
+pub struct CandidateEventWriter<'w, 's> {
     buffer: Deferred<'s, CandidateDiscreteEvents>,
     clock: Res<'w, SimulationComputeClock>,
 }
 
-impl DiscreteChangeWriter<'_, '_> {
-    pub fn write(&mut self, time: SimulationTime, event: impl DiscreteEvent) {
-        self.buffer.queue(self.clock.now(), time, Box::new(event));
+impl CandidateEventWriter<'_, '_> {
+    pub fn predict(&mut self, time: SimulationTime, event: impl DiscreteEvent) {
+        self.buffer.submit(self.clock.now(), time, Box::new(event));
     }
 
-    pub fn write_now(&mut self, event: impl DiscreteEvent) {
-        self.write(self.clock.now(), event);
+    pub fn predict_now(&mut self, event: impl DiscreteEvent) {
+        self.predict(self.clock.now(), event);
     }
 }
 
-/// Writes a component updates as a discrete event.
+/// Predicts a component update as a discrete event.
 #[derive(SystemParam)]
-pub struct DiscreteComponentWriter<'w, 's, T: Component + Clone + Debug> {
+pub struct CandidateComponentEventWriter<'w, 's, T: Component + Clone + Debug> {
     buffer: Deferred<'s, CandidateDiscreteEvents>,
     clock: Res<'w, SimulationComputeClock>,
     _marker: PhantomData<T>,
 }
 
-impl<T: Component + Clone + Debug> DiscreteComponentWriter<'_, '_, T> {
-    pub fn write(&mut self, time: SimulationTime, entity: Entity, value: T) {
-        self.buffer.queue(
+impl<T: Component + Clone + Debug> CandidateComponentEventWriter<'_, '_, T> {
+    pub fn predict(&mut self, time: SimulationTime, entity: Entity, value: T) {
+        self.buffer.submit(
             self.clock.now(),
             time,
-            Box::new(DiscreteComponentWrite { entity, value }),
+            Box::new(CandidateComponentWrite { entity, value }),
         );
     }
 
-    pub fn write_now(&mut self, entity: Entity, value: T) {
-        self.write(self.clock.now(), entity, value);
+    pub fn predict_now(&mut self, entity: Entity, value: T) {
+        self.predict(self.clock.now(), entity, value);
     }
 }
 
 #[derive(Clone, Debug)]
-struct DiscreteComponentWrite<T: Component + Clone + Debug> {
+struct CandidateComponentWrite<T: Component + Clone + Debug> {
     entity: Entity,
     value: T,
 }
 
 // TODO(@reuben-thomas): Handle failures
-impl<T: Component + Clone + Debug> Command for DiscreteComponentWrite<T> {
+impl<T: Component + Clone + Debug> Command for CandidateComponentWrite<T> {
     fn apply(self, world: &mut World) {
         world.entity_mut(self.entity).insert(self.value);
     }
 }
 
-/// Writes a resource updates as a discrete event.
+/// Predicts a resource update as a discrete event.
 #[derive(SystemParam)]
-pub struct DiscreteResourceWriter<'w, 's, R: Resource + Clone + Debug> {
+pub struct CandidateResourceEventWriter<'w, 's, R: Resource + Clone + Debug> {
     buffer: Deferred<'s, CandidateDiscreteEvents>,
     clock: Res<'w, SimulationComputeClock>,
     _marker: PhantomData<R>,
 }
 
-impl<R: Resource + Clone + Debug> DiscreteResourceWriter<'_, '_, R> {
-    pub fn write(&mut self, time: SimulationTime, value: R) {
-        self.buffer.queue(
+impl<R: Resource + Clone + Debug> CandidateResourceEventWriter<'_, '_, R> {
+    pub fn predict(&mut self, time: SimulationTime, value: R) {
+        self.buffer.submit(
             self.clock.now(),
             time,
-            Box::new(DiscreteResourceWrite { value }),
+            Box::new(CandidateResourceWrite { value }),
         );
     }
 
-    pub fn write_now(&mut self, value: R) {
-        self.write(self.clock.now(), value);
+    pub fn predict_now(&mut self, value: R) {
+        self.predict(self.clock.now(), value);
     }
 }
 
 #[derive(Clone, Debug)]
-struct DiscreteResourceWrite<R: Resource + Clone + Debug> {
+struct CandidateResourceWrite<R: Resource + Clone + Debug> {
     value: R,
 }
 
 // TODO(@reuben-thomas): Fail if the resource already exists?
-impl<R: Resource + Clone + Debug> Command for DiscreteResourceWrite<R> {
+impl<R: Resource + Clone + Debug> Command for CandidateResourceWrite<R> {
     fn apply(self, world: &mut World) {
         world.insert_resource(self.value);
     }

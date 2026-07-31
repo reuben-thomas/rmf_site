@@ -1,5 +1,5 @@
 use crate::event::CandidateDiscreteEvents;
-use crate::schedule::{SimulationStartup, SimulationSystemExec};
+use crate::schedule::{SimulationStartup, SimulationPredict};
 use crate::simulation::{
     SimulationComputeState, SimulationComputeUpdate, SimulationPluginFactory, SimulationState,
 };
@@ -16,7 +16,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 pub fn compute_async(
     init_state: SimulationState,
     startup_schedule: Schedule,
-    system_schedule: Schedule,
+    prediction_schedule: Schedule,
     plugins: Vec<SimulationPluginFactory>,
     synchronizer: Synchronizer,
     sender: Sender<SimulationComputeUpdate>,
@@ -28,7 +28,7 @@ pub fn compute_async(
                 let mut app = build_app(
                     init_state,
                     startup_schedule,
-                    system_schedule,
+                    prediction_schedule,
                     plugins,
                     synchronizer,
                     sender,
@@ -49,14 +49,14 @@ pub fn compute_async(
 fn build_app(
     init_state: SimulationState,
     startup_schedule: Schedule,
-    system_schedule: Schedule,
+    prediction_schedule: Schedule,
     plugins: Vec<SimulationPluginFactory>,
     synchronizer: Synchronizer,
     sender: Sender<SimulationComputeUpdate>,
 ) -> App {
     let mut app = App::new();
     app.add_schedule(startup_schedule);
-    app.add_schedule(system_schedule);
+    app.add_schedule(prediction_schedule);
     app.init_resource::<SimulationComputeClock>()
         .init_resource::<CandidateDiscreteEvents>()
         .init_resource::<SimulationEventBuffer>()
@@ -95,7 +95,7 @@ fn compute_time_step(world: &mut World) {
     let _ =
         world.run_system_cached(CandidateDiscreteEvents::execute_highest_priority_current_event);
     loop {
-        world.run_schedule(SimulationSystemExec);
+        world.run_schedule(SimulationPredict);
         let executed = world
             .run_system_cached(CandidateDiscreteEvents::execute_highest_priority_current_event)
             .unwrap();

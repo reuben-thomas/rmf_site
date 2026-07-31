@@ -32,7 +32,7 @@
 //! | Entity | An instance that requires representation in the system model. | [`bevy::prelude::Entity`] |
 //! | Attributes | Properties of an entity, or the system as a whole. | [`bevy::prelude::Component`], [`bevy::prelude::Resource`] |
 //! | Event | An instantaneous occurrence that changes the state of the system. | An [`event::DiscreteEvent`], implemented automatically for any cloneable [`bevy::prelude::Command`]. |
-//! | Event Notice | A record of an event that may occur at some simulation time and the necessary parameters to execute it. | Created using the [`event::DiscreteChangeWriter`], [`event::DiscreteComponentWriter`], and [`event::DiscreteResourceWriter`]. |
+//! | Event Notice | A record of an event that may occur at some simulation time and the necessary parameters to execute it. | Predicted using the [`event::CandidateDiscreteChangeWriter`], [`event::CandidateDiscreteComponentWriter`], and [`event::CandidateDiscreteResourceWriter`] system parameters. |
 //! | Future Event List (FEL) | A list of event notices for future events, ordered by time of occurrence. | The [`event::CandidateDiscreteEvents`] resource holds a list of event notices.. |
 //! | Clock | A variable representing the current value of simulated time. | The [`compute::SimulationComputeClock`] resource. |
 //! | Output | Data produced by running the simulation. | A [`SimulationStep`] for each computed simulation time, collected by the [`Simulation`] component. |
