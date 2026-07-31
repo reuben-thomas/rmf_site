@@ -18,8 +18,7 @@ use rand::Rng;
 use rmf_site_sim::event::{CandidateComponentEventWriter, CandidateEventWriter};
 use rmf_site_sim::interaction::keyboard::SimulationPlaybackKeyboardPlugin;
 use rmf_site_sim::playback::{
-    SimulationPlaybackCommand, SimulationPlaybackPlugin, SimulationPlaybackView,
-    SimulationReplayBehaviour,
+    SimulationPlaybackCommand, SimulationPlaybackPlugin, SimulationReplayBehaviour,
 };
 use rmf_site_sim::time::SimulationClock;
 use rmf_site_sim::time::SimulationTime;
@@ -331,13 +330,14 @@ fn robot(
     }
 }
 
+/// Interpolates robot poses along their trajectories at the current playback
+/// time, which the [`SimulationClock`] tracks while this simulation is being
+/// played back.
 fn animate_robots(
-    playback: SimulationPlaybackView,
+    clock: Res<SimulationClock>,
     mut robots: Query<(&mut Pose, &Trajectory), With<Robot>>,
 ) {
-    let Some(time) = playback.active().map(|active| active.playback.time) else {
-        return;
-    };
+    let time = clock.now();
 
     for (mut pose, trajectory) in &mut robots {
         if let Some(interpolated) = get_pose_at(trajectory, time) {

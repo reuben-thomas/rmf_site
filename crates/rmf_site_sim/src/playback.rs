@@ -2,7 +2,7 @@
 
 use crate::simulation::{Simulation, SimulationComputeState, SimulationState};
 use crate::sync::Synchronizer;
-use crate::time::SimulationTime;
+use crate::time::{SimulationClock, SimulationTime};
 use bevy::ecs::event::EventCursor;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -172,10 +172,8 @@ impl SimulationPlayback {
             match &mut active.state {
                 SimulationPlaybackState::Paused => {}
                 SimulationPlaybackState::Playing => {
-                    active.seek_to_time(
-                        world,
-                        SimulationTime::new(active.time.elapsed() + delta.mul_f32(active.speed)),
-                    );
+                    let time = active.time(world) + delta.mul_f32(active.speed);
+                    active.seek_to_time(world, time);
 
                     if active.at_end(active.simulation_ref(world)) {
                         active.state = match active.replay_behaviour.0 {
@@ -189,7 +187,7 @@ impl SimulationPlayback {
                 SimulationPlaybackState::PendingReplay { timer } => {
                     timer.tick(delta);
                     if timer.just_finished() {
-                        active.load_start(world);
+                        active.load_start_state(world);
                         active.state = SimulationPlaybackState::Playing;
                     }
                 }
@@ -230,9 +228,6 @@ pub struct SimulationActivePlayback {
     synchronizer: Synchronizer,
     /// The play/pause state of playback.
     pub state: SimulationPlaybackState,
-    /// The current time in the simulation, progressed incrementally rather than
-    /// as discrete steps associated with events.
-    pub time: SimulationTime,
     /// The number of steps that have been applied so far.
     pub applied_steps: usize,
     /// The speed multiplier applied while playing.
@@ -247,10 +242,9 @@ impl SimulationActivePlayback {
         self.simulation
     }
 
-    /// Activate a new simulation.
+    /// Activate a new simulation for playback.
     ///
-    /// The current state of the world is saved, and the initial state of the
-    /// simulation is loaded.
+    /// The current state of the world is saved, and the initial state of the simulation is loaded into the world.
     fn activate(world: &mut World, simulation: Entity) -> Option<Self> {
         let Some(sim) = world.get::<Simulation>(simulation) else {
             error!(
@@ -264,21 +258,38 @@ impl SimulationActivePlayback {
             pre_simulation_state: SimulationState::extract(sim.synchronizer(), world),
             synchronizer: sim.synchronizer().clone(),
             state: SimulationPlaybackState::default(),
-            time: SimulationTime::default(),
             applied_steps: 0,
             speed: 1.0,
             replay_behaviour: SimulationReplayBehaviour::default(),
         };
-        active_playback.load_start(world);
+        world.init_resource::<SimulationClock>();
+        active_playback.load_start_state(world);
         Some(active_playback)
     }
 
-    // TODO(@reuben-thomas): Override `std::ops::Drop` to prevent users from
-    // forgetting to call deactivate and reset the state of the world?
-    /// Restores the world to the state before activation of the current
-    /// simulation for playback
+    /// Deactivates the current simulation in playback.
+    ///
+    /// Restores the world to the state before this simulation playback was activated.
     fn deactivate(self, world: &mut World) {
         self.synchronizer.sync(&self.pre_simulation_state.0, world);
+        world.remove_resource::<SimulationClock>();
+    }
+
+    /// The current time in the simulation, progressed incrementally rather than
+    /// as discrete steps associated with events.
+    fn time(&self, world: &World) -> SimulationTime {
+        world
+            .get_resource::<SimulationClock>()
+            .expect("An active playback should have a SimulationClock resource")
+            .now()
+    }
+
+    /// Sets the current time in the simulation.
+    fn set_time(&mut self, world: &mut World, time: SimulationTime) {
+        world
+            .get_resource_mut::<SimulationClock>()
+            .expect("An active playback should have a SimulationClock resource")
+            .set_to(time);
     }
 
     /// Whether playback is either playing, or waiting for replay.
@@ -346,7 +357,7 @@ impl SimulationActivePlayback {
     }
 
     /// Loads the simulation's start state to the world.
-    fn load_start(&mut self, world: &mut World) {
+    fn load_start_state(&mut self, world: &mut World) {
         let sim = world
             .entity_mut(self.simulation)
             .take::<Simulation>()
@@ -354,14 +365,14 @@ impl SimulationActivePlayback {
 
         self.synchronizer.sync(&sim.init_state().0, world);
         world.entity_mut(self.simulation).insert(sim);
-        self.time = SimulationTime::default();
+        self.set_time(world, SimulationTime::default());
         self.applied_steps = 0;
     }
 
     /// Applies exactly up to `applied_steps`.
     fn apply_up_to(&mut self, world: &mut World, applied_steps: usize) {
         if applied_steps < self.applied_steps {
-            self.load_start(world);
+            self.load_start_state(world);
         }
 
         let pending_steps: Vec<_> = self
@@ -375,7 +386,7 @@ impl SimulationActivePlayback {
 
         for (time, step) in pending_steps {
             step.apply(world);
-            self.time = time;
+            self.set_time(world, time);
             self.applied_steps += 1;
         }
     }
@@ -400,7 +411,7 @@ impl SimulationActivePlayback {
         let applied_steps = self.simulation_ref(world).steps().range(..=time).count();
         self.apply_up_to(world, applied_steps);
         // Time is progressed incrementally, rather than last the time of the last step.
-        self.time = time;
+        self.set_time(world, time);
     }
 
     /// Seeks so that every computed step has been applied.
@@ -436,11 +447,10 @@ impl SimulationActivePlayback {
                 duration,
                 direction,
             } => {
+                let elapsed = self.time(world).elapsed();
                 let elapsed = match direction {
-                    SeekDirection::Advance => self.time.elapsed() + duration,
-                    SeekDirection::Revert => self
-                        .time
-                        .elapsed()
+                    SeekDirection::Advance => elapsed + duration,
+                    SeekDirection::Revert => elapsed
                         .checked_sub(duration)
                         .ok_or(SimulationPlaybackSeekOutOfBounds)?,
                 };
@@ -457,7 +467,7 @@ impl SimulationActivePlayback {
     /// reached the end.
     fn play(&mut self, world: &mut World) {
         if self.at_end(self.simulation_ref(world)) {
-            self.load_start(world);
+            self.load_start_state(world);
         }
         self.state = SimulationPlaybackState::Playing;
     }
@@ -474,6 +484,7 @@ impl SimulationActivePlayback {
 #[derive(SystemParam)]
 pub struct SimulationPlaybackView<'w, 's> {
     playback: Res<'w, SimulationPlayback>,
+    clock: Option<Res<'w, SimulationClock>>,
     simulations: Query<'w, 's, &'static Simulation>,
 }
 
@@ -481,9 +492,11 @@ impl SimulationPlaybackView<'_, '_> {
     pub fn active(&self) -> Option<SimulationActivePlaybackView<'_>> {
         let playback = self.playback.0.as_ref()?;
         let simulation = self.simulations.get(playback.simulation).ok()?;
+        let clock = self.clock.as_ref()?;
         Some(SimulationActivePlaybackView {
             playback,
             simulation,
+            time: clock.now(),
         })
     }
 }
@@ -493,6 +506,7 @@ impl SimulationPlaybackView<'_, '_> {
 pub struct SimulationActivePlaybackView<'a> {
     pub playback: &'a SimulationActivePlayback,
     pub simulation: &'a Simulation,
+    pub time: SimulationTime,
 }
 
 impl SimulationActivePlaybackView<'_> {

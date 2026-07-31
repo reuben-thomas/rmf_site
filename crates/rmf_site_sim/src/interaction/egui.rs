@@ -243,7 +243,7 @@ impl<'a> SimulationPlaybackMenu<'a> {
     ) {
         let total = view.simulation.duration();
         let end_secs = total.as_secs_f64();
-        let mut changed_secs = view.playback.time.elapsed().as_secs_f64();
+        let mut changed_secs = view.time.elapsed().as_secs_f64();
         let mut changed = false;
 
         ui.scope(|ui| {

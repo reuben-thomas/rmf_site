@@ -11,7 +11,7 @@ pub struct SimulationTime(Duration);
 
 impl SimulationTime {
     /// Create a new `SimulationTime` from the given elapsed duration.
-    pub fn new(elapsed: Duration) -> Self {
+    pub const fn new(elapsed: Duration) -> Self {
         Self(elapsed)
     }
 
@@ -61,8 +61,10 @@ impl From<SimulationTime> for Duration {
     }
 }
 
-// TODO(@reuben-thomas): This resource should be the soruce of truth for the current time during playback as well.
 /// The current simulation time.
+///
+/// This resource may be read to get the current time by prediction systems during the
+/// computation of a simulation, or visualization systems during playback.
 #[derive(Resource, Debug, Default)]
 pub struct SimulationClock {
     now: SimulationTime,
@@ -85,6 +87,11 @@ impl SimulationClock {
             "Tried to advance to time {time:?} that is earlier than the current time {:?}.",
             self.now
         );
+        self.now = time;
+    }
+
+    /// Sets the clock to `time`.
+    pub(crate) fn set_to(&mut self, time: SimulationTime) {
         self.now = time;
     }
 }

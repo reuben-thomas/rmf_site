@@ -161,8 +161,7 @@ impl<'w, 's> SimulationComputeTile<'w, 's> {
             return Vec::default();
         };
 
-        return self
-            .tasks
+        self.tasks
             .iter()
             .filter(|(task_entity, task)| {
                 task.is_direct()
@@ -173,7 +172,7 @@ impl<'w, 's> SimulationComputeTile<'w, 's> {
                         .unwrap_or(true)
             })
             .map(|(task_entity, _)| task_entity)
-            .collect();
+            .collect()
     }
 }
 

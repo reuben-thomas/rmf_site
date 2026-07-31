@@ -2,9 +2,7 @@ use crate::interaction::egui::{
     SimulationOverview, SimulationPlaybackEventTable, SimulationPlaybackMenu,
     SimulationPlaybackSelector,
 };
-use crate::playback::{
-    SimulationActivePlaybackView, SimulationPlaybackCommand, SimulationPlaybackView,
-};
+use crate::playback::{SimulationPlaybackCommand, SimulationPlaybackView};
 use crate::simulation::Simulation;
 use bevy::ecs::system::SystemParam;
 use bevy::ecs::system::SystemState;
