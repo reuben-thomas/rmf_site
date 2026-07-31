@@ -169,7 +169,6 @@ struct CandidateComponentWrite<T: Component + Clone + Debug> {
     value: T,
 }
 
-// TODO(@reuben-thomas): Handle failures
 impl<T: Component + Clone + Debug> Command for CandidateComponentWrite<T> {
     fn apply(self, world: &mut World) {
         world.entity_mut(self.entity).insert(self.value);

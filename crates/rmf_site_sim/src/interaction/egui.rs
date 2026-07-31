@@ -18,7 +18,6 @@ pub struct SimulationPlaybackSelector<'a> {
 }
 
 impl<'a> SimulationPlaybackSelector<'a> {
-    // TODO(@reuben-thomas): Should we allow playback for failed simulations?
     pub fn new(
         simulations: impl IntoIterator<Item = (Entity, &'a str)>,
         active: Option<Entity>,
