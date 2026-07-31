@@ -1,5 +1,3 @@
-use crate::compute::SimulationComputeClock;
-use crate::event::DynDiscreteEvent;
 use crate::simulation::{SimulationComputeUpdate, SimulationStep};
 use crate::time::SimulationTime;
 use bevy::ecs::component::ComponentId;
@@ -136,35 +134,12 @@ impl StateUpdateSender {
         Self(sender)
     }
 
-    fn send(&self, time: SimulationTime, step: SimulationStep) {
-        let _ = self.0.send(SimulationComputeUpdate::Step(time, step));
-    }
-}
-
-/// A buffer to store [`DiscreteEvent`](crate::event::DiscreteEvent)s
-/// executed in the current step, sent to the main world as a single[`SimulationStep`].
-#[derive(Resource, Default)]
-pub struct SimulationEventBuffer(Vec<Box<dyn DynDiscreteEvent>>);
-
-impl SimulationEventBuffer {
-    pub(crate) fn extend(&mut self, events: impl IntoIterator<Item = Box<dyn DynDiscreteEvent>>) {
-        self.0.extend(events);
-    }
-
-    /// System that sends the buffered events as one [`SimulationStep`], if any.
-    pub fn send_step(
-        clock: Res<SimulationComputeClock>,
-        mut buffer: ResMut<Self>,
-        sender: Res<StateUpdateSender>,
-    ) {
-        if buffer.0.is_empty() {
+    /// Send a step that was computed for the given time.
+    pub fn send(&self, time: SimulationTime, step: SimulationStep) {
+        if step.event_count() == 0 {
             return;
         }
-
-        sender.send(
-            clock.now(),
-            SimulationStep::new(buffer.0.drain(..).collect()),
-        );
+        let _ = self.0.send(SimulationComputeUpdate::Step(time, step));
     }
 }
 

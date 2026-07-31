@@ -34,7 +34,7 @@
 //! | Event | An instantaneous occurrence that changes the state of the system. | An [`event::DiscreteEvent`], implemented automatically for any cloneable [`bevy::prelude::Command`]. |
 //! | Event Notice | A record of an event that may occur at some simulation time and the necessary parameters to execute it. | Predicted using the [`event::CandidateDiscreteChangeWriter`], [`event::CandidateDiscreteComponentWriter`], and [`event::CandidateDiscreteResourceWriter`] system parameters. |
 //! | Future Event List (FEL) | A list of event notices for future events, ordered by time of occurrence. | The [`event::CandidateDiscreteEvents`] resource holds a list of event notices.. |
-//! | Clock | A variable representing the current value of simulated time. | The [`compute::SimulationComputeClock`] resource. |
+//! | Clock | A variable representing the current value of simulated time. | The [`time::SimulationClock`] resource. |
 //! | Output | Data produced by running the simulation. | A [`SimulationStep`] for each computed simulation time, collected by the [`Simulation`] component. |
 pub mod compute;
 pub mod event;

@@ -1,3 +1,4 @@
+use bevy::prelude::*;
 use std::ops::{Add, Sub};
 use std::time::Duration;
 
@@ -57,5 +58,33 @@ impl From<Duration> for SimulationTime {
 impl From<SimulationTime> for Duration {
     fn from(time: SimulationTime) -> Self {
         time.0
+    }
+}
+
+// TODO(@reuben-thomas): This resource should be the soruce of truth for the current time during playback as well.
+/// The current simulation time.
+#[derive(Resource, Debug, Default)]
+pub struct SimulationClock {
+    now: SimulationTime,
+}
+
+impl SimulationClock {
+    /// The current simulation time.
+    pub fn now(&self) -> SimulationTime {
+        self.now
+    }
+
+    /// Advances the clock to `time`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `time` is earlier than the current time.
+    pub(crate) fn advance_to(&mut self, time: SimulationTime) {
+        assert!(
+            time >= self.now,
+            "Tried to advance to time {time:?} that is earlier than the current time {:?}.",
+            self.now
+        );
+        self.now = time;
     }
 }
