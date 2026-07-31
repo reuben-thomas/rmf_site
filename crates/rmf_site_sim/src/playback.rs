@@ -90,8 +90,6 @@ pub enum SeekDirection {
     Revert,
 }
 
-// TODO(@reuben-thomas): Distinguish OOB between a complete and in progress
-// computation simulation.
 /// The requested seek falls out of simulation's computed steps.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SimulationPlaybackSeekOutOfBounds;
@@ -227,8 +225,6 @@ pub struct SimulationActivePlayback {
     /// A snapshot of the world's state before this playback, to restore the
     /// state of the main world upon terminating this playback.
     pre_simulation_state: SimulationState,
-    // TODO(@reuben-thomas): Clarify the use of a synchronizer for this purpose, can we assume the
-    // only relevant changes are guaranteed to be of the same component type?
     /// A synchronizer used to capture the state of the world before playback,
     /// and after.
     synchronizer: Synchronizer,
@@ -407,7 +403,6 @@ impl SimulationActivePlayback {
         self.time = time;
     }
 
-    // TODO(@reuben-thomas): Distinguish between available end and actual end.
     /// Seeks so that every computed step has been applied.
     fn seek_to_end(&mut self, world: &mut World) {
         let available = self.simulation_ref(world).steps().len();

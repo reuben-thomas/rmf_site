@@ -139,7 +139,6 @@ pub struct Simulation {
 }
 
 impl Simulation {
-    // TODO(@reuben-thomas): Should extract be performed explicitly? e.g.
     // Simulation::extract, Simulation::compute
     fn new<M: Component + Clone>(builder: SimulationBuilder<M>, world: &World) -> Self {
         let (sender, receiver) = unbounded();
@@ -187,7 +186,6 @@ impl Simulation {
         self.visualization_schedule = schedule;
     }
 
-    // TODO(@reuben-thomas): Should this provide an iterator instead?
     /// The computed simulation steps, ordered by simulation time.
     pub fn steps(&self) -> &BTreeMap<SimulationTime, SimulationStep> {
         &self.simulation_steps
