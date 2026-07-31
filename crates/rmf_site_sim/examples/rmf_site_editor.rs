@@ -11,12 +11,12 @@ use rmf_site_egui::{
     MenuEvent, MenuItem, PanelConfig, PanelSettings, PanelWidget, PanelWidgetInput, ScrollConfig,
     Tile, ToolMenu, Widget, WidgetSystem, show_panel_of_tiles,
 };
-use rmf_site_sim::compute::SimulationComputeClock;
 use rmf_site_sim::event::CandidateEventWriter;
 use rmf_site_sim::interaction::rmf_site_egui::{
     SimulationOverviewTile, SimulationPlaybackTile, show_collapsible_section,
 };
 use rmf_site_sim::playback::SimulationPlaybackPlugin;
+use rmf_site_sim::time::SimulationClock;
 use rmf_site_sim::time::SimulationTime;
 use rmf_site_sim::{SimulationBuilder, SimulationPlugin};
 use std::time::Duration;
@@ -266,7 +266,7 @@ mod simulation {
 
     pub fn request_generator(
         tasks: Query<(Entity, &TaskParams, &RequestStatus), With<Task>>,
-        clock: Res<SimulationComputeClock>,
+        clock: Res<SimulationClock>,
         mut changes: CandidateEventWriter,
     ) {
         let now = clock.now();

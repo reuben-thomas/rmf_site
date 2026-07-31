@@ -1,7 +1,7 @@
-use crate::compute::compute_async;
+use crate::compute::{SimulationComputeSettings, compute_async};
 use crate::event::DynDiscreteEvent;
 use crate::schedule::{
-    ScheduleBuilder, SimulationStartup, SimulationPredict, SimulationVisualize,
+    ScheduleBuilder, SimulationPredict, SimulationStartup, SimulationVisualize,
     SystemExecutionOrdering,
 };
 use crate::sync::Synchronizer;
@@ -34,6 +34,7 @@ pub struct SimulationBuilder<M: Component + Clone> {
     prediction_schedule_builder: ScheduleBuilder,
     visualization_schedule_builder: ScheduleBuilder,
     plugins: Vec<SimulationPluginFactory>,
+    compute_settings: SimulationComputeSettings,
 }
 
 impl<M: Component + Clone> Default for SimulationBuilder<M> {
@@ -58,8 +59,15 @@ impl<M: Component + Clone> SimulationBuilder<M> {
                 .set_ordering(SystemExecutionOrdering::Total),
             visualization_schedule_builder: ScheduleBuilder::new(SimulationVisualize),
             plugins: Vec::new(),
+            compute_settings: SimulationComputeSettings::default(),
             marker: PhantomData,
         }
+    }
+
+    /// Configure settings for how this simulation should be computed.
+    pub fn set_compute_settings(mut self, settings: SimulationComputeSettings) -> Self {
+        self.compute_settings = settings;
+        self
     }
 
     /// Registers a component to synchronize into the simulation world.
@@ -140,6 +148,7 @@ impl Simulation {
             builder.startup_schedule_builder.build(),
             builder.prediction_schedule_builder.build(),
             builder.plugins,
+            builder.compute_settings,
             builder.synchronizer.clone(),
             sender,
         );
@@ -195,8 +204,6 @@ impl Simulation {
             .elapsed()
     }
 
-    // TODO(@reuben-thomas): Time bound this system in order to avoid delaying the
-    // main app.
     /// Applies [`StateUpdate`]s received from the compute task.
     fn process_updates(mut simulations: Query<&mut Simulation>) {
         for mut simulation in &mut simulations {

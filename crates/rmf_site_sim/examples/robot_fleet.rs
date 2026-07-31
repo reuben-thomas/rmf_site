@@ -15,13 +15,13 @@ use bevy::color::palettes::basic;
 use bevy::ecs::entity::EntityHashSet;
 use bevy::prelude::*;
 use rand::Rng;
-use rmf_site_sim::compute::SimulationComputeClock;
-use rmf_site_sim::event::{CandidateEventWriter, CandidateComponentEventWriter};
+use rmf_site_sim::event::{CandidateComponentEventWriter, CandidateEventWriter};
 use rmf_site_sim::interaction::keyboard::SimulationPlaybackKeyboardPlugin;
 use rmf_site_sim::playback::{
     SimulationPlaybackCommand, SimulationPlaybackPlugin, SimulationPlaybackView,
     SimulationReplayBehaviour,
 };
+use rmf_site_sim::time::SimulationClock;
 use rmf_site_sim::time::SimulationTime;
 use rmf_site_sim::{SimulationBuilder, SimulationPlugin};
 use std::time::Duration;
@@ -238,7 +238,7 @@ fn request_generator(
 fn planner(
     robots: Query<(Entity, &Pose, &Name, &Request), (With<Robot>, Without<Trajectory>)>,
     goals: Query<&Pose, With<Waypoint>>,
-    clock: Res<SimulationComputeClock>,
+    clock: Res<SimulationClock>,
     mut trajectories: CandidateComponentEventWriter<Trajectory>,
 ) {
     let time_now = clock.now();
@@ -296,7 +296,7 @@ fn robot(
     target_waypoints: Query<&Waypoint>,
     mut waypoints: CandidateComponentEventWriter<Waypoint>,
     mut changes: CandidateEventWriter,
-    clock: Res<SimulationComputeClock>,
+    clock: Res<SimulationClock>,
 ) {
     let now = clock.now();
 
