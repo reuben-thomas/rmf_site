@@ -7,7 +7,13 @@ use std::marker::PhantomData;
 /// An instantaneous change on the world state, the [`bevy::prelude::World`] during a simulation.
 pub trait DiscreteEvent: Command + Clone + Send + Sync + Debug + 'static {
     fn name() -> &'static str {
-        std::any::type_name::<Self>()
+        let full_name = std::any::type_name::<Self>();
+        let prefix_end = full_name.find('<').unwrap_or(full_name.len());
+
+        match full_name[..prefix_end].rfind("::") {
+            Some(index) => &full_name[index + 2..],
+            None => full_name,
+        }
     }
 }
 
