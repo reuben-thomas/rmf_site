@@ -12,9 +12,6 @@ use egui::Frame;
 use rmf_site_egui::{Tile, WidgetSystem};
 use rmf_site_format::NameInSite;
 
-/// Maximum height of scrollable areas.
-const SCROLL_AREA_MAX_HEIGHT: f32 = 400.0;
-
 /// Vertical spacing between sections of a tile.
 const SECTION_SPACING: f32 = 4.0;
 
@@ -26,14 +23,12 @@ pub struct SimulationOverviewTile<'w, 's> {
 
 impl<'w, 's> SimulationOverviewTile<'w, 's> {
     fn show_overview(&self, ui: &mut Ui) {
-        show_scroll_area(ui, "simulation_cards", |ui| {
-            SimulationOverview::new(
-                self.simulations
-                    .iter()
-                    .map(|(entity, name, simulation)| (entity, name.as_str(), simulation)),
-            )
-            .show(ui);
-        });
+        SimulationOverview::new(
+            self.simulations
+                .iter()
+                .map(|(entity, name, simulation)| (entity, name.as_str(), simulation)),
+        )
+        .show(ui);
     }
 }
 
@@ -82,9 +77,7 @@ impl<'w, 's> SimulationPlaybackTile<'w, 's> {
         SimulationPlaybackMenu::new(active).show(ui, commands);
         ui.add_space(SECTION_SPACING);
         Frame::group(ui.style()).show(ui, |ui| {
-            show_scroll_area(ui, "simulation_playback_event_table", |ui| {
-                SimulationPlaybackEventTable::new(active).show(ui, commands);
-            });
+            SimulationPlaybackEventTable::new(active).show(ui, commands);
         });
     }
 }
@@ -104,13 +97,4 @@ pub fn show_collapsible_section(ui: &mut Ui, title: &str, add_contents: impl FnO
         .default_open(true)
         .show(ui, add_contents);
     ui.separator();
-}
-
-/// Shows contents in a vertical scroll area bounded by [`SCROLL_AREA_MAX_HEIGHT`].
-fn show_scroll_area(ui: &mut Ui, id_salt: &str, add_contents: impl FnOnce(&mut Ui)) {
-    egui::ScrollArea::vertical()
-        .id_salt(id_salt)
-        .max_height(SCROLL_AREA_MAX_HEIGHT)
-        .auto_shrink([false, true])
-        .show(ui, add_contents);
 }

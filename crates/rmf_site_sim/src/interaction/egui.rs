@@ -11,6 +11,12 @@ use std::collections::BTreeMap;
 use std::hash::Hash;
 use std::time::Duration;
 
+/// Maximum height of scrollable areas.
+pub const SCROLL_AREA_MAX_HEIGHT: f32 = 400.0;
+
+/// Padding around the contents of an event's code block.
+const EVENT_CONTENTS_MARGIN: i8 = 4;
+
 /// A dropdown menu for selecting or deselecting a simulation for playback.
 pub struct SimulationPlaybackSelector<'a> {
     simulations: Vec<(Entity, &'a str)>,
@@ -291,13 +297,33 @@ impl<'a> SimulationPlaybackEventTable<'a> {
             return;
         }
 
-        Self::show_steps(ui, steps, self.view.playback.applied_steps, commands);
+        let follow = Self::show_follow_checkbox(ui);
+        show_scroll_area(ui, "simulation_playback_event_table", |ui| {
+            Self::show_steps(
+                ui,
+                steps,
+                self.view.playback.applied_steps,
+                follow,
+                commands,
+            );
+        });
+    }
+
+    /// A checkbox toggling whether the table scrolls to the current step.
+    fn show_follow_checkbox(ui: &mut egui::Ui) -> bool {
+        let id = egui::Id::new("simulation_playback_event_table_follow");
+        let mut follow = ui.data(|data| data.get_temp(id)).unwrap_or(true);
+        ui.checkbox(&mut follow, "Follow")
+            .on_hover_text("Automatically scroll to follow the current simulation playback");
+        ui.data_mut(|data| data.insert_temp(id, follow));
+        follow
     }
 
     fn show_steps(
         ui: &mut egui::Ui,
         steps: &BTreeMap<SimulationTime, SimulationStep>,
         applied_steps: usize,
+        follow: bool,
         commands: &mut EventWriter<SimulationPlaybackCommand>,
     ) {
         egui::Grid::new("simulation_playback_event_table_grid")
@@ -311,7 +337,7 @@ impl<'a> SimulationPlaybackEventTable<'a> {
                 for (index, (time, step)) in steps.iter().enumerate() {
                     let is_current = applied_steps > 0 && index == applied_steps - 1;
 
-                    Self::show_step_time(ui, index, *time, is_current, commands);
+                    Self::show_step_time(ui, index, *time, is_current, follow, commands);
                     Self::show_step_events(ui, index, step);
                     ui.end_row();
                 }
@@ -323,6 +349,7 @@ impl<'a> SimulationPlaybackEventTable<'a> {
         index: usize,
         time: SimulationTime,
         is_current: bool,
+        follow: bool,
         commands: &mut EventWriter<SimulationPlaybackCommand>,
     ) {
         let response = ui.selectable_label(
@@ -337,9 +364,7 @@ impl<'a> SimulationPlaybackEventTable<'a> {
             ));
         }
 
-        // TODO(@reuben-thomas): Should the user be allowed to detatch from following the active event?
-        // Maintain a following state, that is unset when the user scrolls out, prompting a reset button to appear.
-        if is_current {
+        if is_current && follow {
             response.scroll_to_me(Some(egui::Align::Center));
         }
     }
@@ -363,9 +388,18 @@ impl<'a> SimulationPlaybackEventTable<'a> {
     }
 
     fn show_event(ui: &mut egui::Ui, id_salt: impl Hash, event: &dyn DynDiscreteEvent) {
-        egui::CollapsingHeader::new(event.name())
+        egui::CollapsingHeader::new(egui::RichText::new(event.name()).strong())
             .id_salt(id_salt)
+            .show(ui, |ui| Self::show_event_contents(ui, event));
+    }
+
+    fn show_event_contents(ui: &mut egui::Ui, event: &dyn DynDiscreteEvent) {
+        egui::Frame::new()
+            .fill(ui.visuals().code_bg_color)
+            .corner_radius(ui.visuals().noninteractive().corner_radius)
+            .inner_margin(EVENT_CONTENTS_MARGIN)
             .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
                 ui.label(egui::RichText::new(format!("{event:#?}")).monospace());
             });
     }
@@ -390,11 +424,13 @@ impl<'a> SimulationOverview<'a> {
             return;
         }
 
-        for (entity, name, simulation) in simulations {
-            ui.push_id(entity, |ui| {
-                Self::show_simulation(ui, name, simulation);
-            });
-        }
+        show_scroll_area(ui, "simulation_cards", |ui| {
+            for (entity, name, simulation) in simulations {
+                ui.push_id(entity, |ui| {
+                    Self::show_simulation(ui, name, simulation);
+                });
+            }
+        });
     }
 
     fn show_simulation(ui: &mut egui::Ui, name: &str, simulation: &Simulation) {
@@ -431,4 +467,17 @@ impl<'a> SimulationOverview<'a> {
             SimulationComputeState::Failed => ("Failed", Color32::RED),
         }
     }
+}
+
+/// Shows contents in a scroll area bounded by [`SCROLL_AREA_MAX_HEIGHT`].
+fn show_scroll_area(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    egui::ScrollArea::both()
+        .id_salt(id_salt)
+        .max_height(SCROLL_AREA_MAX_HEIGHT)
+        .auto_shrink([false, true])
+        .show(ui, add_contents);
 }
