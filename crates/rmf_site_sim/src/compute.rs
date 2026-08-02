@@ -28,7 +28,7 @@ impl Default for SimulationComputeSettings {
     }
 }
 
-/// Computes [`SimulationStep`](crate::simulation::SimulationStep)s for a simulation in a [`AsyncComputeTaskPool`].
+/// Computes [`SimulationStep`]s for a simulation in a [`AsyncComputeTaskPool`].
 pub fn compute_async(
     init_state: SimulationState,
     startup_schedule: Schedule,

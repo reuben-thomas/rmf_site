@@ -122,8 +122,8 @@ impl SystemBuffer for CandidateDiscreteEvents {
 
 /// Predicts [`DiscreteEvent`]s that may occur.
 ///
-/// In most cases, you should use [`CandidateDiscreteComponentWriter`] or
-/// [`CandidateDiscreteResourceWriter`] if you do not wish to implement a
+/// In most cases, you should use [`CandidateComponentEventWriter`] or
+/// [`CandidateResourceEventWriter`] if you do not wish to implement a
 /// [`DiscreteEvent`] struct.
 #[derive(SystemParam)]
 pub struct CandidateEventWriter<'w, 's> {
