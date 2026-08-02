@@ -127,7 +127,10 @@ impl SimulationPlayback {
     // access?
     /// Runs the active simulation's visualization schedule on the main world.
     fn visualize(world: &mut World) {
-        let Some(simulation_entity) = world.resource::<SimulationPlayback>().active_playback().map(|s| s.simulation)
+        let Some(simulation_entity) = world
+            .resource::<SimulationPlayback>()
+            .active_playback()
+            .map(|s| s.simulation)
         else {
             return;
         };
