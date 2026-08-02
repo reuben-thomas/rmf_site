@@ -23,7 +23,7 @@
 //!           │                    │              │  │
 //!           │                    │              │◄─┘
 //!           │                    │              │
-//! 
+//!
 //! ```
 //!
 //! [`request_generator`] creates [`SubmitRequest`] commands assigning robots to

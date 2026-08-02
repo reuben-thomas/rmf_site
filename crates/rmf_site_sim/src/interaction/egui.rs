@@ -470,11 +470,7 @@ impl<'a> SimulationOverview<'a> {
 }
 
 /// Shows contents in a scroll area bounded by [`SCROLL_AREA_MAX_HEIGHT`].
-fn show_scroll_area(
-    ui: &mut egui::Ui,
-    id_salt: &str,
-    add_contents: impl FnOnce(&mut egui::Ui),
-) {
+fn show_scroll_area(ui: &mut egui::Ui, id_salt: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::ScrollArea::both()
         .id_salt(id_salt)
         .max_height(SCROLL_AREA_MAX_HEIGHT)
