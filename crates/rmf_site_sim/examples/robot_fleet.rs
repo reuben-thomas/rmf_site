@@ -1,15 +1,35 @@
 //! In this example, we configure, compute, and animate a simple discrete event
 //! simulation for a fleet of robots navigating to randomly assigned goals. Each
-//! model type within the simulation is represented as a Bevy system.
+//! type of entity is is represented as a Bevy system.
 //!
-//! A request generator creates requests assigning robots to goal waypoints at
-//! random. A planner system generates trajectories from these requests. From
-//! the generated trajectories, a robot system then predicts waypoint visits and
-//! request completions.
+//! ```text
+//! ┌───────────────────┐     ┌─────────┐     ┌───────┐
+//! │ request_generator │     │ planner │     │ robot │
+//! └─────────┬─────────┘     └────┬────┘     └───┬───┘
+//!           │                    │              │
+//!           │ SubmitRequest      │              │
+//!           ├───────────────────►│              │
+//!           │                    │              │
+//!           │                    │ Trajectory   │
+//!           │                    ├─────────────►│
+//!           │                    │              │
+//!           │                    │              │ Waypoint
+//!           │                    │              ├──┐
+//!           │                    │              │  │
+//!           │                    │              │◄─┘
+//!           │                    │              │
+//!           │                    │              │ CompleteRequest
+//!           │                    │              ├──┐
+//!           │                    │              │  │
+//!           │                    │              │◄─┘
+//!           │                    │              │
+//! 
+//! ```
 //!
-//! ```
-//! RequestGeneratorSystem --[RequestEvent..]--> PlannerSystem --[TrajectoryEvent..]--> RobotSystem --[WaypointEvent..]
-//! ```
+//! [`request_generator`] creates [`SubmitRequest`] commands assigning robots to
+//! goal waypoints at random. [`planner`] generates a [`Trajectory`] from each of
+//! these requests. From the generated trajectories, [`robot`] then predicts
+//! [`Waypoint`] visits and [`CompleteRequest`] completions.
 
 use bevy::color::palettes::basic;
 use bevy::ecs::entity::EntityHashSet;
