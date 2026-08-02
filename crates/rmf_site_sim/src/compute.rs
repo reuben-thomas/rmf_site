@@ -16,7 +16,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 pub struct SimulationComputeSettings {
     /// The maximum number of instantaneous events that may be executed for a single simulation time step.
     ///
-    /// Exceeding this limit will terminate the simulation early with an error.
+    /// Exceeding this limit panics, terminating the computation with
+    /// [`SimulationComputeState::Failed`].
     pub max_events_per_step: Option<u64>,
 }
 
@@ -137,7 +138,7 @@ fn compute_step(world: &mut World, max_events: Option<u64>) -> Option<Simulation
         if let Some(max_events) = max_events
             && events.len() as u64 >= max_events
         {
-            error!(
+            panic!(
                 "Reached the maximum of {max_events} instantaneous events at time {:?}",
                 world.resource::<SimulationClock>().now()
             );
