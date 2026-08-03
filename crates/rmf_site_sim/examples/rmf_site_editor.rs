@@ -30,9 +30,9 @@ use rmf_site_editor::color_picker::ColorPicker;
 use rmf_site_editor::layers::ZLayer;
 use rmf_site_editor::occupancy::{Cell, Grid};
 use rmf_site_editor::site::{
-    Affiliation, Angle, CircleCollision, CurrentLevel, DifferentialDrive, DoorMarker, GoToPlace,
-    LocationTags, NameInSite, Point, Pose, Robot, Rotation, SiteAssets, Task, TaskParams,
-    line_stroke_transform,
+    Affiliation, Angle, CircleCollision, CurrentLevel, DifferentialDrive, DoorMarker, DoorType,
+    Edge, GoToPlace, LocationTags, NameInSite, Point, Pose, Robot, Rotation, SiteAssets, Task,
+    TaskParams, line_stroke_transform,
 };
 use rmf_site_sim::event::{CandidateComponentEventWriter, CandidateEventWriter};
 use rmf_site_sim::playback::SimulationPlaybackPlugin;
@@ -47,8 +47,8 @@ use ui::SimulationUiPlugin;
 use visualization::*;
 
 const NEGOTIATION_QUEUE_LENGTH_LIMIT: usize = 1_000_000;
-const DEFAULT_CELL_SIZE: f32 = 0.5;
 const DEFAULT_ROBOT_RADIUS: f32 = 0.2;
+const DOOR_TRANSITION: Duration = Duration::from_secs(2);
 
 fn main() {
     App::new()
@@ -310,6 +310,56 @@ mod simulation {
         pub cell_size: f32,
     }
 
+    /// The state of a door.
+    #[derive(Component, Clone, Copy, Debug, PartialEq)]
+    pub struct DoorState {
+        pub open: bool,
+        pub set_at: SimulationTime,
+        pub from: f32,
+    }
+
+    impl DoorState {
+        pub fn closed() -> Self {
+            Self {
+                open: false,
+                set_at: SimulationTime::zero(),
+                from: 0.0,
+            }
+        }
+
+        pub fn move_state(&self, open: bool, now: SimulationTime) -> Self {
+            Self {
+                open,
+                set_at: now,
+                from: self.position(now),
+            }
+        }
+
+        pub fn position(&self, now: SimulationTime) -> f32 {
+            let elapsed = now.elapsed().saturating_sub(self.set_at.elapsed());
+            let progress = (elapsed.as_secs_f32() / DOOR_TRANSITION.as_secs_f32()).clamp(0.0, 1.0);
+            let target = if self.open { 1.0 } else { 0.0 };
+            self.from + (target - self.from) * progress
+        }
+    }
+
+    /// A convenience command for assigning a door state to all doors in a single [`rmf_site_sim::event::DiscreteEvent`].
+    #[derive(Clone, Debug)]
+    pub struct MoveDoors {
+        pub states: Vec<(Entity, DoorState)>,
+    }
+
+    impl Command for MoveDoors {
+        fn apply(self, world: &mut World) {
+            for (door, state) in self.states {
+                world.entity_mut(door).insert(state);
+            }
+        }
+    }
+
+    #[derive(Component, Clone, Debug)]
+    pub struct DoorCells(pub HashSet<Cell>);
+
     pub fn spawn_simulation(world: &mut World, tasks: &[Entity], name: String) -> Entity {
         let mut setup_state: SystemState<SimulationSetup> = SystemState::new(world);
         let setup = setup_state.get(world);
@@ -320,6 +370,7 @@ mod simulation {
             .collect();
         let simulated = setup.simulated_entities();
         let occupancy = setup.create_occupancy();
+        let door_cells = setup.create_door_cells(occupancy.cell_size);
         world.insert_resource(occupancy);
 
         for entity in simulated {
@@ -333,6 +384,9 @@ mod simulation {
         for (task, assignment) in assignments {
             world.entity_mut(task).insert(assignment);
         }
+        for (door, cells) in door_cells {
+            world.entity_mut(door).insert((cells, DoorState::closed()));
+        }
 
         let simulation = SimulationBuilder::<SimulationMarker>::new()
             .register_component::<NameInSite>()
@@ -344,9 +398,12 @@ mod simulation {
             .register_component::<Affiliation<Entity>>()
             .register_component::<DifferentialDrive>()
             .register_component::<CircleCollision>()
+            .register_component::<DoorState>()
+            .register_component::<DoorCells>()
+            .register_component::<DoorType>()
             .register_resource::<Occupancy>()
-            .add_prediction_systems((request_generator, robot, planner).chain())
-            .add_visualization_systems((animate_robots, draw_robot_paths).chain())
+            .add_prediction_systems((request_generator, robot, door, planner).chain())
+            .add_visualization_systems((animate_robots, animate_doors, draw_robot_paths).chain())
             .build(world);
 
         world.spawn((simulation, NameInSite(name))).id()
@@ -366,7 +423,7 @@ mod simulation {
             ),
             With<Robot>,
         >,
-        doors: Query<'w, 's, Entity, With<DoorMarker>>,
+        doors: Query<'w, 's, (Entity, &'static Edge<Entity>), With<DoorMarker>>,
         locations: Query<'w, 's, (&'static NameInSite, &'static Point<Entity>), With<LocationTags>>,
         anchors: Query<'w, 's, &'static GlobalTransform>,
         grids: Query<'w, 's, (&'static Grid, &'static ChildOf)>,
@@ -383,8 +440,24 @@ mod simulation {
                     .filter_map(|(_, _, affiliation)| affiliation.and_then(|a| a.0)),
             );
 
-            entities.extend(self.doors.iter());
+            entities.extend(self.doors.iter().map(|(door, _)| door));
             entities
+        }
+
+        fn create_door_cells(&self, cell_size: f32) -> Vec<(Entity, DoorCells)> {
+            self.doors
+                .iter()
+                .filter_map(|(door, edge)| {
+                    let left = self.anchors.get(edge.left()).ok()?.translation().truncate();
+                    let right = self
+                        .anchors
+                        .get(edge.right())
+                        .ok()?
+                        .translation()
+                        .truncate();
+                    Some((door, DoorCells(get_cells_along(&[left, right], cell_size))))
+                })
+                .collect()
         }
 
         fn create_assignment(&self, task: Entity) -> Option<RobotGoalAssignment> {
@@ -443,7 +516,7 @@ mod simulation {
 
             info!(
                 "[request_generator] Scheduled the request for {} at {time:?}",
-                robot_name(assignment.robot, &names)
+                name_of(assignment.robot, &names)
             );
         }
     }
@@ -480,8 +553,51 @@ mod simulation {
             states.predict(arrival, task, TaskState::Complete);
             info!(
                 "[robot] Scheduled {} to arrive at {arrival:?}",
-                robot_name(assignment.robot, &names)
+                name_of(assignment.robot, &names)
             );
+        }
+    }
+
+    pub fn door(
+        doors: Query<(Entity, &DoorState, &DoorCells)>,
+        tasks: Query<(Entity, &TaskState, &RobotGoalAssignment)>,
+        trajectories: Query<&RobotTrajectory>,
+        names: Query<&NameInSite>,
+        occupancy: Res<Occupancy>,
+        clock: Res<SimulationClock>,
+        mut changes: CandidateEventWriter,
+    ) {
+        let mut planned = HashSet::new();
+        let mut planning = false;
+
+        for (task, state, assignment) in tasks.iter() {
+            match active_trajectory(task, state, assignment, &trajectories) {
+                Some(trajectory) => planned.extend(crate::mapf::trajectory_cells(
+                    &trajectory.waypoints,
+                    occupancy.cell_size,
+                )),
+                None => planning |= *state == TaskState::Active,
+            }
+        }
+
+        let now = clock.now();
+        let mut states = Vec::new();
+        for (door, state, cells) in doors.iter() {
+            let open = planning || cells.0.iter().any(|cell| planned.contains(cell));
+            if state.open == open {
+                continue;
+            }
+
+            states.push((door, state.move_state(open, now)));
+            info!(
+                "[doors] Scheduled {} to {} at {now:?}",
+                name_of(door, &names),
+                if open { "open" } else { "close" },
+            );
+        }
+
+        if !states.is_empty() {
+            changes.predict_now(MoveDoors { states });
         }
     }
 
@@ -490,6 +606,7 @@ mod simulation {
         tasks: Query<(Entity, &TaskState, &RobotGoalAssignment)>,
         robots: Query<(&Pose, &Affiliation<Entity>, Option<&RobotTrajectory>)>,
         descriptions: Query<(&DifferentialDrive, &CircleCollision)>,
+        doors: Query<(&DoorState, &DoorCells)>,
         names: Query<&NameInSite>,
         occupancy: Res<Occupancy>,
         clock: Res<SimulationClock>,
@@ -525,6 +642,7 @@ mod simulation {
 
         let now = clock.now();
         let expected = agents.len();
+        let occupancy = update_occupancy_from_doors(&occupancy, doors.iter());
         let Some(negotiated) = crate::mapf::negotiate_trajectories(agents, &names, &occupancy, now)
         else {
             return;
@@ -541,11 +659,11 @@ mod simulation {
         changes.predict_now(AssignRobotTrajectory { trajectories });
     }
 
-    pub fn robot_name(robot: Entity, names: &Query<&NameInSite>) -> String {
+    pub fn name_of(entity: Entity, names: &Query<&NameInSite>) -> String {
         names
-            .get(robot)
+            .get(entity)
             .map(|name| name.0.clone())
-            .unwrap_or_else(|_| robot.to_string())
+            .unwrap_or_else(|_| entity.to_string())
     }
 
     pub fn active_trajectory<'a>(
@@ -559,6 +677,35 @@ mod simulation {
         }
         let trajectory = trajectories.get(assignment.robot).ok()?;
         (trajectory.task == task).then_some(trajectory)
+    }
+
+    pub fn update_occupancy_from_doors<'a>(
+        occupancy: &Occupancy,
+        doors: impl Iterator<Item = (&'a DoorState, &'a DoorCells)>,
+    ) -> Occupancy {
+        let mut occupancy = occupancy.clone();
+        for (state, cells) in doors {
+            if !state.open {
+                occupancy.occupied.extend(cells.0.iter().copied());
+            }
+        }
+        occupancy
+    }
+
+    pub fn get_cells_along(points: &[Vec2], cell_size: f32) -> HashSet<Cell> {
+        let mut cells: HashSet<Cell> = points
+            .iter()
+            .map(|point| Cell::from_point(*point, cell_size))
+            .collect();
+
+        for pair in points.windows(2) {
+            let steps = (pair[0].distance(pair[1]) / (cell_size / 2.0)).ceil() as usize;
+            for step in 1..steps {
+                let point = pair[0].lerp(pair[1], step as f32 / steps as f32);
+                cells.insert(Cell::from_point(point, cell_size));
+            }
+        }
+        cells
     }
 }
 
@@ -657,6 +804,10 @@ mod mapf {
         )
     }
 
+    pub fn trajectory_cells(trajectory: &LinearTrajectorySE2, cell_size: f32) -> HashSet<Cell> {
+        get_cells_along(&waypoint_positions(trajectory), cell_size)
+    }
+
     pub fn waypoint_positions(trajectory: &LinearTrajectorySE2) -> Vec<Vec2> {
         trajectory
             .iter()
@@ -686,7 +837,7 @@ mod mapf {
     ) -> HashMap<String, Entity> {
         let mut robots = HashMap::new();
         for robot in agents.keys() {
-            let base = robot_name(*robot, names);
+            let base = name_of(*robot, names);
             let mut name = base.clone();
             for suffix in 2.. {
                 if !robots.contains_key(&name) {
@@ -729,6 +880,24 @@ mod visualization {
             };
 
             *pose = crate::mapf::pose_at(&trajectory.waypoints, now, pose.trans[2]);
+        }
+    }
+
+    pub fn animate_doors(
+        doors: Query<(Entity, &DoorState)>,
+        mut kinds: Query<&mut DoorType>,
+        clock: Res<SimulationClock>,
+    ) {
+        let now = clock.now();
+
+        for (door, state) in doors.iter() {
+            let Ok(mut kind) = kinds.get_mut(door) else {
+                continue;
+            };
+
+            let mut moved = kind.clone();
+            moved.set_positions(state.position(now));
+            kind.set_if_neq(moved);
         }
     }
 
