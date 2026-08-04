@@ -1,0 +1,6 @@
+flowchart LR
+    request_generator -->|TaskRequest| planner
+    planner -->|AddTrajectory| robot
+    robot -->|RobotPoseUpdate| planner
+    robot -->|DoorCommand| door
+    door --> |DoorState| robot
