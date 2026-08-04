@@ -11,7 +11,7 @@
 //! ```
 use bevy::{
     ecs::query::QueryData,
-    ecs::system::{Command, SystemParam, SystemState},
+    ecs::system::{SystemParam, SystemState},
     prelude::*,
 };
 use rmf_site_editor::SiteEditor;
@@ -23,7 +23,7 @@ use rmf_site_editor::site::{
     Edge, GoToPlace, LocationTags, NameInSite, Point, Pose, Robot, Rotation, SiteAssets, Task,
     TaskParams, find_door_position_tfs, line_stroke_transform,
 };
-use rmf_site_sim::event::{CandidateComponentEventWriter, CandidateEventWriter};
+use rmf_site_sim::event::{CandidateComponentEventWriter, CandidateEventWriter, DiscreteEvent};
 use rmf_site_sim::playback::SimulationPlaybackPlugin;
 use rmf_site_sim::time::SimulationClock;
 use rmf_site_sim::time::SimulationTime;
@@ -407,7 +407,7 @@ mod simulation {
         pub trajectories: Vec<(Entity, RobotTrajectory)>,
     }
 
-    impl Command for AssignRobotTrajectory {
+    impl DiscreteEvent for AssignRobotTrajectory {
         fn apply(self, world: &mut World) {
             for (robot, trajectory) in self.trajectories {
                 world.entity_mut(robot).insert(trajectory);

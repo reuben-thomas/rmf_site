@@ -1,23 +1,27 @@
 use crate::time::{SimulationClock, SimulationTime};
-use bevy::ecs::system::{Command, Deferred, SystemBuffer, SystemMeta, SystemParam};
+use bevy::ecs::system::{Deferred, SystemBuffer, SystemMeta, SystemParam};
 use bevy::prelude::*;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
 /// An instantaneous change on the world state, the [`bevy::prelude::World`] during a simulation.
-pub trait DiscreteEvent: Command + Clone + Send + Sync + Debug + 'static {
-    fn name() -> &'static str {
-        let full_name = std::any::type_name::<Self>();
-        let prefix_end = full_name.find('<').unwrap_or(full_name.len());
+pub trait DiscreteEvent: Clone + Send + Sync + Debug + 'static {
+    fn apply(self, world: &mut World);
 
-        match full_name[..prefix_end].rfind("::") {
-            Some(index) => &full_name[index + 2..],
-            None => full_name,
-        }
+    fn name() -> &'static str {
+        short_type_name::<Self>()
     }
 }
 
-impl<T> DiscreteEvent for T where T: Command + Clone + Send + Sync + Debug + 'static {}
+fn short_type_name<T: ?Sized>() -> &'static str {
+    let full_name = std::any::type_name::<T>();
+    let prefix_end = full_name.find('<').unwrap_or(full_name.len());
+
+    match full_name[..prefix_end].rfind("::") {
+        Some(index) => &full_name[index + 2..],
+        None => full_name,
+    }
+}
 
 mod sealed {
     pub trait Sealed {}
@@ -36,7 +40,7 @@ pub trait DynDiscreteEvent: sealed::Sealed + Debug + Send + Sync + 'static {
 
 impl<T: DiscreteEvent> DynDiscreteEvent for T {
     fn apply(self: Box<Self>, world: &mut World) {
-        Command::apply(*self, world)
+        DiscreteEvent::apply(*self, world)
     }
 
     fn clone_to_box(&self) -> Box<dyn DynDiscreteEvent> {
@@ -175,9 +179,13 @@ struct CandidateComponentWrite<T: Component + Clone + Debug> {
     value: T,
 }
 
-impl<T: Component + Clone + Debug> Command for CandidateComponentWrite<T> {
+impl<T: Component + Clone + Debug> DiscreteEvent for CandidateComponentWrite<T> {
     fn apply(self, world: &mut World) {
         world.entity_mut(self.entity).insert(self.value);
+    }
+
+    fn name() -> &'static str {
+        short_type_name::<T>()
     }
 }
 
@@ -209,9 +217,13 @@ struct CandidateResourceWrite<R: Resource + Clone + Debug> {
 }
 
 // TODO(@reuben-thomas): Fail if the resource already exists?
-impl<R: Resource + Clone + Debug> Command for CandidateResourceWrite<R> {
+impl<R: Resource + Clone + Debug> DiscreteEvent for CandidateResourceWrite<R> {
     fn apply(self, world: &mut World) {
         world.insert_resource(self.value);
+    }
+
+    fn name() -> &'static str {
+        short_type_name::<R>()
     }
 }
 
@@ -224,7 +236,7 @@ mod tests {
     #[derive(Clone, Debug)]
     struct RecordEvent(u32);
 
-    impl Command for RecordEvent {
+    impl DiscreteEvent for RecordEvent {
         fn apply(self, world: &mut World) {
             world.resource_mut::<AppliedEvents>().0.push(self.0);
         }
