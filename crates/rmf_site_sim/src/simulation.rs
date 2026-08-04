@@ -1,4 +1,4 @@
-use crate::compute::{SimulationComputeSettings, compute_async};
+use crate::compute::{SimulationComputeSettings, SimulationComputeTimer, compute_async};
 use crate::event::DynDiscreteEvent;
 use crate::schedule::{
     ScheduleBuilder, SimulationPredict, SimulationStartup, SimulationVisualize,
@@ -134,6 +134,7 @@ pub struct Simulation {
     synchronizer: Synchronizer,
     simulation_steps: BTreeMap<SimulationTime, SimulationStep>,
     state: SimulationComputeState,
+    compute_timer: SimulationComputeTimer,
     update_receiver: Receiver<SimulationComputeUpdate>,
     visualization_schedule: Schedule,
 }
@@ -142,6 +143,7 @@ impl Simulation {
     // Simulation::extract, Simulation::compute
     fn new<M: Component + Clone>(builder: SimulationBuilder<M>, world: &World) -> Self {
         let (sender, receiver) = unbounded();
+        let compute_timer = SimulationComputeTimer::start();
         compute_async(
             SimulationState::extract_with::<M>(&builder.synchronizer, world),
             builder.startup_schedule_builder.build(),
@@ -157,6 +159,7 @@ impl Simulation {
             synchronizer: builder.synchronizer,
             simulation_steps: BTreeMap::new(),
             state: SimulationComputeState::Computing,
+            compute_timer,
             update_receiver: receiver,
             visualization_schedule: builder.visualization_schedule_builder.build(),
         }
@@ -164,6 +167,10 @@ impl Simulation {
 
     pub fn state(&self) -> SimulationComputeState {
         self.state
+    }
+
+    pub fn compute_elapsed(&self) -> Duration {
+        self.compute_timer.elapsed()
     }
 
     pub fn init_state(&self) -> &SimulationState {
@@ -213,6 +220,7 @@ impl Simulation {
                     }
                     SimulationComputeUpdate::State(state) => {
                         simulation.state = state;
+                        simulation.compute_timer.stop();
                     }
                 }
             }
