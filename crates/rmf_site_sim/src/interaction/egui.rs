@@ -17,6 +17,17 @@ pub const SCROLL_AREA_MAX_HEIGHT: f32 = 400.0;
 /// Padding around the contents of an event's code block.
 const EVENT_CONTENTS_MARGIN: i8 = 4;
 
+/// Margins around a pill.
+const PILL_MARGIN: egui::Margin = egui::Margin {
+    left: 6,
+    right: 6,
+    top: 1,
+    bottom: 1,
+};
+
+/// Corner radius of a pill
+const PILL_CORNER_RADIUS: u8 = 255;
+
 /// A dropdown menu for selecting or deselecting a simulation for playback.
 pub struct SimulationPlaybackSelector<'a> {
     simulations: Vec<(Entity, &'a str)>,
@@ -434,15 +445,32 @@ impl<'a> SimulationOverview<'a> {
     }
 
     fn show_simulation(ui: &mut egui::Ui, name: &str, simulation: &Simulation) {
-        let (state, color) = Self::compute_state_label(simulation.state());
+        let id = ui.make_persistent_id("simulation_card");
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
+            .show_header(ui, |ui| {
+                ui.strong(name);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    Self::show_compute_state_pill(ui, simulation.state());
+                });
+            })
+            .body(|ui| Self::show_details(ui, simulation));
+    }
 
-        ui.horizontal(|ui| {
-            ui.strong(name);
-            ui.colored_label(color, state);
-        });
-        ui.collapsing("Details", |ui| {
-            Self::show_details(ui, simulation);
-        });
+    fn show_compute_state_pill(ui: &mut egui::Ui, state: SimulationComputeState) {
+        let (label, color) = Self::compute_state_label(state);
+
+        egui::Frame::new()
+            .fill(color)
+            .corner_radius(PILL_CORNER_RADIUS)
+            .inner_margin(PILL_MARGIN)
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(label)
+                        .color(Color32::BLACK)
+                        .small()
+                        .strong(),
+                );
+            });
     }
 
     fn show_details(ui: &mut egui::Ui, simulation: &Simulation) {
