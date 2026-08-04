@@ -130,7 +130,7 @@ fn handle_name_limit(limit: usize, name: &str) -> String {
     result
 }
 
-fn find_door_position_tfs(kind: &DoorType, length: f32, offset: f32) -> Vec<Transform> {
+pub fn find_door_position_tfs(kind: &DoorType, length: f32, offset: f32) -> Vec<Transform> {
     let door_slide_tf = |side: Side, position, door_length, is_double, offset| {
         let (translation_offset, gap) = match is_double {
             false => (0.0, 0.0),
