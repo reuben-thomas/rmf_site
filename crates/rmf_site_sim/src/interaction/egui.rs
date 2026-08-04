@@ -450,14 +450,15 @@ impl<'a> SimulationOverview<'a> {
             .show_header(ui, |ui| {
                 ui.strong(name);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    Self::show_compute_state_pill(ui, simulation.state());
+                    Self::show_compute_state_pill(ui, simulation);
                 });
             })
             .body(|ui| Self::show_details(ui, simulation));
     }
 
-    fn show_compute_state_pill(ui: &mut egui::Ui, state: SimulationComputeState) {
-        let (label, color) = Self::compute_state_label(state);
+    fn show_compute_state_pill(ui: &mut egui::Ui, simulation: &Simulation) {
+        let (label, color) =
+            Self::compute_state_label(simulation.state(), simulation.compute_elapsed());
 
         egui::Frame::new()
             .fill(color)
@@ -488,11 +489,23 @@ impl<'a> SimulationOverview<'a> {
         }
     }
 
-    fn compute_state_label(state: SimulationComputeState) -> (&'static str, egui::Color32) {
+    fn compute_state_label(
+        state: SimulationComputeState,
+        elapsed: Duration,
+    ) -> (String, egui::Color32) {
         match state {
-            SimulationComputeState::Computing => ("Computing", Color32::ORANGE),
-            SimulationComputeState::Complete => ("Computed", Color32::GREEN),
-            SimulationComputeState::Failed => ("Failed", Color32::RED),
+            SimulationComputeState::Computing => (
+                format!("Computing ({elapsed:.2?})"),
+                Color32::from_rgb(240, 220, 90),
+            ),
+            SimulationComputeState::Complete => (
+                format!("Computed ({elapsed:.2?})"),
+                Color32::from_rgb(100, 240, 100),
+            ),
+            SimulationComputeState::Failed => (
+                format!("Failed ({elapsed:.2?})"),
+                Color32::from_rgb(240, 100, 100),
+            ),
         }
     }
 }

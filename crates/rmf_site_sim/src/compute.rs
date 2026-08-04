@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, TaskPool};
 use crossbeam_channel::Sender;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::time::{Duration, Instant};
 
 /// Settings for the computation of a simulation.
 #[derive(Clone, Copy, Debug)]
@@ -172,6 +173,40 @@ fn execute_highest_priority_current_event(world: &mut World) -> Option<Box<dyn D
 fn send_step(world: &mut World, step: SimulationStep) {
     let now = world.resource::<SimulationClock>().now();
     world.resource::<StateUpdateSender>().send(now, step);
+}
+
+// TODO(@reuben-thomas)
+/// A timer to measure the time taken by a simulation compute task.
+#[derive(Clone, Copy, Debug)]
+pub struct SimulationComputeTimer {
+    started: Instant,
+    total: Option<Duration>,
+}
+
+impl Default for SimulationComputeTimer {
+    fn default() -> Self {
+        Self::start()
+    }
+}
+
+impl SimulationComputeTimer {
+    /// Creates a timer that begins measuring time immediately.
+    pub fn start() -> Self {
+        Self {
+            started: Instant::now(),
+            total: None,
+        }
+    }
+
+    /// Stops the timer.
+    pub fn stop(&mut self) {
+        self.total = Some(self.started.elapsed());
+    }
+
+    /// The elapsed time.
+    pub fn elapsed(&self) -> Duration {
+        self.total.unwrap_or_else(|| self.started.elapsed())
+    }
 }
 
 #[cfg(test)]
