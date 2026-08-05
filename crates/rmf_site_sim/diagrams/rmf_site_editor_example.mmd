@@ -1,6 +1,15 @@
-flowchart LR
-    request_generator -->|TaskRequest| planner
-    planner -->|AddTrajectory| robot
-    robot -->|RobotPoseUpdate| planner
-    robot -->|DoorCommand| door
-    door --> |DoorState| robot
+sequenceDiagram
+    participant request_generator
+    participant planner
+    participant robot
+    participant door
+
+    request_generator->>planner: TaskRequest
+    robot->>planner: RobotPoseUpdate
+    planner->>robot: AddTrajectory
+    door->>robot: DoorState(closed)
+    robot->>robot: UpdateTracking(follow_delay)
+    robot->>door: DoorCommand(open)
+    door->>robot: DoorState(open)
+    robot->>robot: UpdateTracking(follow_delay)
+    robot->>robot: GoalReached
