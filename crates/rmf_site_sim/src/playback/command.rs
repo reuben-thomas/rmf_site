@@ -9,6 +9,9 @@ use std::time::Duration;
 /// The allowed playback speed range.
 pub const PLAYBACK_SPEED_RANGE: RangeInclusive<f32> = 0.01..=100.0;
 
+/// The playback speed applied when a simulation is activated for playback.
+pub const DEFAULT_PLAYBACK_SPEED: f32 = 1.0;
+
 /// Commands for controlling playback of an active Simulation.
 #[derive(Event, Clone, Copy, Debug)]
 pub enum SimulationPlaybackCommand {

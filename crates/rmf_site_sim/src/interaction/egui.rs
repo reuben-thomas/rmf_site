@@ -1,7 +1,7 @@
 use crate::event::DynDiscreteEvent;
 use crate::playback::{
-    PLAYBACK_SPEED_RANGE, SeekDirection, SimulationActivePlaybackView, SimulationPlaybackCommand,
-    SimulationPlaybackSeek, SimulationReplayBehaviour,
+    DEFAULT_PLAYBACK_SPEED, PLAYBACK_SPEED_RANGE, SeekDirection, SimulationActivePlaybackView,
+    SimulationPlaybackCommand, SimulationPlaybackSeek, SimulationReplayBehaviour,
 };
 use crate::simulation::{Simulation, SimulationComputeState, SimulationStep};
 use crate::time::SimulationTime;
@@ -217,6 +217,15 @@ impl<'a> SimulationPlaybackMenu<'a> {
         if changed {
             commands.write(SimulationPlaybackCommand::SetSpeed(speed));
         }
+
+        Self::show_command_button(
+            ui,
+            speed != DEFAULT_PLAYBACK_SPEED,
+            "🔄",
+            "Reset playback speed",
+            SimulationPlaybackCommand::SetSpeed(DEFAULT_PLAYBACK_SPEED),
+            commands,
+        );
     }
 
     /// Show a menu to toggle replay behaviour, and configure pause duration.
