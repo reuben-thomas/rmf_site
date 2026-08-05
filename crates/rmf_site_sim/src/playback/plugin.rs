@@ -1,5 +1,6 @@
 use super::command::{
-    PLAYBACK_SPEED_RANGE, SeekDirection, SimulationPlaybackCommand, SimulationPlaybackSeek,
+    DEFAULT_PLAYBACK_SPEED, PLAYBACK_SPEED_RANGE, SeekDirection, SimulationPlaybackCommand,
+    SimulationPlaybackSeek,
     SimulationPlaybackSeekOutOfBounds, SimulationReplayBehaviour,
 };
 use crate::simulation::{Simulation, SimulationComputeState, SimulationState};
@@ -190,7 +191,7 @@ impl SimulationActivePlayback {
             synchronizer: sim.synchronizer().clone(),
             state: SimulationPlaybackState::default(),
             applied_steps: 0,
-            speed: 1.0,
+            speed: DEFAULT_PLAYBACK_SPEED,
             replay_behaviour: SimulationReplayBehaviour::default(),
         };
         world.init_resource::<SimulationClock>();
