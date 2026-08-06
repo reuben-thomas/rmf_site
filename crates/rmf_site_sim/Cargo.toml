@@ -28,4 +28,5 @@ rmf_site_sim = { path = ".", features = ["rmf_site_egui"] }
 
 [[example]]
 name = "rmf_site_editor"
+path = "examples/rmf_site_editor/main.rs"
 required-features = ["rmf_site_egui"]

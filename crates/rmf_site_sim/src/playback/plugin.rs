@@ -1,7 +1,6 @@
 use super::command::{
     DEFAULT_PLAYBACK_SPEED, PLAYBACK_SPEED_RANGE, SeekDirection, SimulationPlaybackCommand,
-    SimulationPlaybackSeek,
-    SimulationPlaybackSeekOutOfBounds, SimulationReplayBehaviour,
+    SimulationPlaybackSeek, SimulationPlaybackSeekOutOfBounds, SimulationReplayBehaviour,
 };
 use crate::simulation::{Simulation, SimulationComputeState, SimulationState};
 use crate::sync::Synchronizer;

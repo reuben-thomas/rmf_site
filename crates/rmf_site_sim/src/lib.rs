@@ -15,6 +15,11 @@
  *
  */
 
+// TODO(@reuben-thomas): Final completion tasks
+// - [ ] Follow Rust API guidelines: https://rust-lang.github.io/api-guidelines/about.html
+// - [ ] Rust Docs
+// - [ ] Implement assembly_line_example
+// - [ ] Address existing feature TODOs
 //! # `rmf_site_sim`
 //!
 //! `rmf_site_sim` provides the ability to perform
