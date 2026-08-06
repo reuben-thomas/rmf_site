@@ -1,3 +1,5 @@
+//! User interface and interaction plugins.
+
 pub mod keyboard;
 
 #[cfg(feature = "egui")]

@@ -1,3 +1,5 @@
+//! Keyboard shortcuts for controlling simulation playback.
+
 use crate::playback::{
     SeekDirection, SimulationPlaybackCommand, SimulationPlaybackSeek, SimulationPlaybackView,
 };

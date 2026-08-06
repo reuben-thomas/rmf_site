@@ -1,3 +1,5 @@
+//! Widgets to view and playback simulations using for the [rmf_site_editor](https://github.com/open-rmf/rmf_site).
+
 use crate::interaction::egui::{
     SimulationOverview, SimulationPlaybackEventTable, SimulationPlaybackMenu,
     SimulationPlaybackSelector,

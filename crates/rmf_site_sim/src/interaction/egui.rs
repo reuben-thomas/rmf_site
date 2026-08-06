@@ -1,3 +1,5 @@
+//! [`egui`] widgets for inspecting simulations and controlling playback.
+
 use crate::event::DynDiscreteEvent;
 use crate::playback::{
     DEFAULT_PLAYBACK_SPEED, PLAYBACK_SPEED_RANGE, SeekDirection, SimulationActivePlaybackView,

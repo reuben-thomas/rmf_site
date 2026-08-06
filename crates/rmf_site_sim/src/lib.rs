@@ -18,7 +18,7 @@
 // TODO(@reuben-thomas): Final completion tasks
 // - [ ] Follow Rust API guidelines: https://rust-lang.github.io/api-guidelines/about.html
 // - [ ] Rust Docs
-// - [ ] Implement assembly_line_example
+// - [x] Implement assembly_line_example
 // - [ ] Address existing feature TODOs
 //! # `rmf_site_sim`
 //!
@@ -32,11 +32,11 @@
 //! | Concept | Definition | Representation |
 //! | --- | --- | --- |
 //! | System | A collection of entities being modelled over time. | - |
-//! | System Model | An abstract representation of the system. | A collection of Bevy systems ([`bevy::prelude::System`]) configured in a [`SimulationBuilder`]. |
-//! | System State | A state vector describing the state of the world at any time-instance. | Entities, components, and resources in [`bevy::prelude::World`]. |
-//! | Entity | An instance that requires representation in the system model. | [`bevy::prelude::Entity`] |
-//! | Attributes | Properties of an entity, or the system as a whole. | [`bevy::prelude::Component`], [`bevy::prelude::Resource`] |
-//! | Event | An instantaneous occurrence that changes the state of the system. | An [`event::DiscreteEvent`], implemented automatically for any cloneable [`bevy::prelude::Command`]. |
+//! | System Model | An abstract representation of the system. | A collection of Bevy systems ([`bevy::prelude::System`](bevy::ecs::system::System)) configured in a [`SimulationBuilder`]. |
+//! | System State | A state vector describing the state of the world at any time-instance. | Entities, components, and resources in [`bevy::prelude::World`](bevy::ecs::world::World). |
+//! | Entity | An instance that requires representation in the system model. | [`bevy::prelude::Entity`](bevy::ecs::entity::Entity) |
+//! | Attributes | Properties of an entity, or the system as a whole. | [`bevy::prelude::Component`](bevy::ecs::component::Component), [`bevy::prelude::Resource`](bevy::ecs::resource::Resource) |
+//! | Event | An instantaneous occurrence that changes the state of the system. | An [`event::DiscreteEvent`], implemented automatically for any cloneable [`bevy::prelude::Command`](bevy::ecs::system::Command). |
 //! | Event Notice | A record of an event that may occur at some simulation time and the necessary parameters to execute it. | Predicted using the [`event::CandidateEventWriter`], [`event::CandidateComponentEventWriter`], and [`event::CandidateResourceEventWriter`] system parameters. |
 //! | Future Event List (FEL) | A list of event notices for future events, ordered by time of occurrence. | The [`event::CandidateDiscreteEvents`] resource holds a list of event notices.. |
 //! | Clock | A variable representing the current value of simulated time. | The [`time::SimulationClock`] resource. |
