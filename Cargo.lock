@@ -5810,6 +5810,7 @@ dependencies = [
  "crossbeam-channel",
  "mapf",
  "rand",
+ "rand_distr",
  "rmf_site_editor",
  "rmf_site_egui",
  "rmf_site_format",

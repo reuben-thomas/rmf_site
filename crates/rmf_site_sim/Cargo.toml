@@ -22,6 +22,7 @@ rmf_site_egui = ["egui", "dep:rmf_site_egui", "dep:rmf_site_format"]
 [dev-dependencies]
 mapf = { workspace = true }
 rand = "0.8"
+rand_distr = "0.4"
 rmf_site_editor = { workspace = true }
 rmf_site_egui = { workspace = true }
 rmf_site_sim = { path = ".", features = ["rmf_site_egui"] }

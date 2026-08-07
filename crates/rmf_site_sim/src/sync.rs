@@ -6,6 +6,7 @@ use bevy::utils::TypeIdMap;
 use crossbeam_channel::Sender;
 use std::any::TypeId;
 
+// TODO(@reuben-thomas): Handle parent child relationships.
 /// Synchronizes entities, components, and resources from a source world into a
 /// target world.
 ///
