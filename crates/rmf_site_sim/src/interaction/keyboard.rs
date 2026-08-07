@@ -6,6 +6,9 @@ use crate::playback::{
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+/// Plugin for controlling the active playback simulation with the keyboard.
+///
+/// Insert a [`SimulationPlaybackKeymap`] to override the default keymap bindings.
 pub struct SimulationPlaybackKeyboardPlugin;
 
 impl Plugin for SimulationPlaybackKeyboardPlugin {
@@ -15,20 +18,25 @@ impl Plugin for SimulationPlaybackKeyboardPlugin {
     }
 }
 
+/// An action that can be bound to a key in [`SimulationPlaybackKeymap`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SimulationPlaybackKeyboardAction {
+    /// Plays the simulation, or pauses it if it is already playing.
     TogglePlayPause,
-    ChangeSpeed {
-        delta: f32,
-    },
+    /// Adds `delta` to the current playback speed.
+    ChangeSpeed { delta: f32 },
+    /// Seeks `steps` simulation steps in `direction`.
     Step {
         steps: usize,
         direction: SeekDirection,
     },
+    /// Seeks to the first computed simulation step.
     SeekToStart,
+    /// Seeks to the last computed simulation step.
     SeekToEnd,
 }
 
+/// The action each key performs during playback.
 #[derive(Resource, Clone, Debug, Deref, DerefMut)]
 pub struct SimulationPlaybackKeymap(pub HashMap<KeyCode, SimulationPlaybackKeyboardAction>);
 
