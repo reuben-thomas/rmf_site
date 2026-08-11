@@ -78,9 +78,9 @@ use rmf_site_editor::color_picker::ColorPicker;
 use rmf_site_editor::layers::ZLayer;
 use rmf_site_editor::occupancy::{Cell, Grid};
 use rmf_site_editor::site::{
-    Affiliation, Angle, CircleCollision, CurrentLevel, DifferentialDrive, DoorMarker, DoorType,
-    Edge, GoToPlace, LocationTags, NameInSite, Point, Pose, Robot, Rotation, SiteAssets, Task,
-    TaskParams, find_door_position_tfs, line_stroke_transform,
+    Affiliation, Angle, Bottom, CircleCollision, CurrentLevel, DifferentialDrive, DoorMarker,
+    DoorType, Edge, GoToPlace, LevelHeightParam, LocationTags, NameInSite, Point, Pose, Robot,
+    Rotation, SiteAssets, Task, TaskParams, Top, find_door_position_tfs, line_stroke_transform,
 };
 use rmf_site_sim::event::{CandidateComponentEventWriter, CandidateEventWriter};
 use rmf_site_sim::playback::SimulationPlaybackPlugin;

@@ -474,21 +474,24 @@ pub fn planner(
 /// A helper [`SystemParam`] for setting up the simulation.
 #[derive(SystemParam)]
 pub struct SimulationSetup<'w, 's> {
-    tasks: Query<'w, 's, (&'static Task, &'static GoToPlace)>,
-    robots: Query<
+    tasks: Query<'w, 's, (&'static Task<Entity>, &'static GoToPlace<Entity>)>,
+    robots: Query<'w, 's, (Entity, Option<&'static Affiliation<Entity>>), With<Robot>>,
+    doors: Query<
         'w,
         's,
         (
             Entity,
-            &'static NameInSite,
-            Option<&'static Affiliation<Entity>>,
+            &'static Edge<Entity>,
+            &'static DoorType,
+            &'static Bottom,
+            &'static Top,
         ),
-        With<Robot>,
+        With<DoorMarker>,
     >,
-    doors: Query<'w, 's, (Entity, &'static Edge<Entity>, &'static DoorType), With<DoorMarker>>,
-    locations: Query<'w, 's, (&'static NameInSite, &'static Point<Entity>), With<LocationTags>>,
+    locations: Query<'w, 's, &'static Point<Entity>, With<LocationTags>>,
     anchors: Query<'w, 's, &'static GlobalTransform>,
     grids: Query<'w, 's, (&'static Grid, &'static ChildOf)>,
+    level_height: LevelHeightParam<'w, 's>,
     current_level: Res<'w, CurrentLevel>,
 }
 
@@ -500,7 +503,7 @@ impl SimulationSetup<'_, '_> {
         entities.extend(
             self.robots
                 .iter()
-                .filter_map(|(_, _, affiliation)| affiliation.and_then(|a| a.0)),
+                .filter_map(|(_, affiliation)| affiliation.and_then(|a| a.0)),
         );
         entities.extend(self.doors.iter().map(|(door, ..)| door));
         entities
@@ -509,7 +512,7 @@ impl SimulationSetup<'_, '_> {
     fn create_door_occupancies(&self, cell_size: f32) -> Vec<(Entity, DynamicObstacleOccupancy)> {
         self.doors
             .iter()
-            .filter_map(|(door, edge, kind)| {
+            .filter_map(|(door, edge, kind, bottom, top)| {
                 let left = self.anchors.get(edge.left()).ok()?.translation().truncate();
                 let right = self
                     .anchors
@@ -517,21 +520,21 @@ impl SimulationSetup<'_, '_> {
                     .ok()?
                     .translation()
                     .truncate();
-                Some((door, create_door_occupancy(left, right, kind, cell_size)))
+                let level_height = self.level_height.get_level_height(door);
+                let bottom = bottom.for_level_height(level_height);
+                let top = top.for_level_height(level_height);
+                Some((
+                    door,
+                    create_door_occupancy(left, right, kind, bottom, top, cell_size),
+                ))
             })
             .collect()
     }
 
     fn create_assignment(&self, task: Entity) -> Option<RobotGoalAssignment> {
         let (request, go_to_place) = self.tasks.get(task).ok()?;
-        let (robot, _, _) = self
-            .robots
-            .iter()
-            .find(|(_, name, _)| name.0 == request.robot())?;
-        let (_, Point(anchor)) = self
-            .locations
-            .iter()
-            .find(|(name, _)| name.0 == go_to_place.location)?;
+        let (robot, _) = self.robots.get(request.robot().0?).ok()?;
+        let Point(anchor) = self.locations.get(go_to_place.location.0?).ok()?;
         let goal = self.anchors.get(*anchor).ok()?.translation().truncate();
 
         Some(RobotGoalAssignment { robot, goal })
@@ -557,6 +560,8 @@ fn create_door_occupancy(
     left: Vec2,
     right: Vec2,
     door: &DoorType,
+    bottom: f32,
+    top: f32,
     cell_size: f32,
 ) -> DynamicObstacleOccupancy {
     let steps = ((left.distance(right) * std::f32::consts::PI) / (cell_size / 2.0)).ceil();
@@ -567,7 +572,7 @@ fn create_door_occupancy(
 
     for step in 0..=steps {
         door_swept.set_positions(step as f32 / steps as f32);
-        for (start, end) in door_panel_endpoints(left, right, &door_swept) {
+        for (start, end) in door_panel_endpoints(left, right, &door_swept, bottom, top) {
             cells.extend(get_cells_along(&[start, end], cell_size));
         }
     }
@@ -575,7 +580,13 @@ fn create_door_occupancy(
     DynamicObstacleOccupancy(cells)
 }
 
-fn door_panel_endpoints(left: Vec2, right: Vec2, kind: &DoorType) -> Vec<(Vec2, Vec2)> {
+fn door_panel_endpoints(
+    left: Vec2,
+    right: Vec2,
+    kind: &DoorType,
+    bottom: f32,
+    top: f32,
+) -> Vec<(Vec2, Vec2)> {
     let length = left.distance(right);
     let offset = match kind {
         DoorType::DoubleSliding(door) => door.compute_offset(length),
@@ -588,7 +599,7 @@ fn door_panel_endpoints(left: Vec2, right: Vec2, kind: &DoorType) -> Vec<(Vec2, 
     let x_axis = Vec2::new(y_axis.y, -y_axis.x);
     let in_site = |point: Vec2| origin + x_axis * point.x + y_axis * point.y;
 
-    find_door_position_tfs(kind, length, offset)
+    find_door_position_tfs(kind, bottom, top, length, offset)
         .into_iter()
         .map(|panel| {
             let center = panel.translation.truncate();

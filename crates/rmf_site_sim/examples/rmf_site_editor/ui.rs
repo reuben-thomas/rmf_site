@@ -1,12 +1,9 @@
 use crate::*;
-use rmf_site_editor::AppState;
 use rmf_site_editor::bevy_egui::egui::{self, Ui};
 use rmf_site_editor::occupancy::{OccupancyExporter, OccupancyInfo};
 use rmf_site_editor::site::{CurrentScenario, GetModifier, Inclusion, Modifier};
-use rmf_site_egui::{
-    MenuEvent, MenuItem, PanelConfig, PanelSettings, PanelWidget, PanelWidgetInput, ScrollConfig,
-    Tile, ToolMenu, Widget, WidgetSystem, show_panel_of_tiles,
-};
+use rmf_site_editor::widgets::TaskWidget;
+use rmf_site_egui::{Tile, Widget, WidgetSystem};
 use rmf_site_sim::interaction::rmf_site_egui::{
     SimulationOverviewTile, SimulationPlaybackTile, show_collapsible_section,
 };
@@ -14,31 +11,16 @@ use rmf_site_sim::interaction::rmf_site_egui::{
 /// The allowed occupancy cell size range.
 const CELL_SIZE_RANGE: std::ops::RangeInclusive<f32> = 0.01..=5.0;
 
-/// The plugin providing an side panel to manage simulations, and a menu item to toggle its visibility.
 #[derive(Default)]
 pub struct SimulationUiPlugin;
 
 impl Plugin for SimulationUiPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SimulationPanel>()
-            .add_systems(Update, SimulationPanel::handle_visibility);
+        app.add_systems(Startup, show_task_panel);
 
-        let panel_widget = PanelWidget::new(SimulationPanel::panel, app.world_mut());
-        let panel = app
-            .world_mut()
-            .spawn((
-                panel_widget,
-                PanelSettings::left(),
-                PanelConfig {
-                    default_dimension: 300.0,
-                    horizontal_scrolling: ScrollConfig {
-                        enable_scroll: false,
-                        auto_shrink: false,
-                    },
-                    ..Default::default()
-                },
-            ))
-            .id();
+        let Some(panel) = task_panel(app.world_mut()) else {
+            return;
+        };
 
         for widget in [
             Widget::<Tile>::new::<SimulationPanelHeader>(app.world_mut()),
@@ -51,72 +33,25 @@ impl Plugin for SimulationUiPlugin {
     }
 }
 
-/// A simulation overview panel.
-#[derive(Resource)]
-struct SimulationPanel {
-    /// Whether this panel is visible.
-    show: bool,
-    /// The menu item toggling this panel's visibility.
-    toggle_panel: Entity,
+fn task_panel(world: &mut World) -> Option<Entity> {
+    let task_widget = world.get_resource::<TaskWidget>()?.get();
+    Some(world.get::<ChildOf>(task_widget)?.parent())
 }
 
-impl FromWorld for SimulationPanel {
-    fn from_world(world: &mut World) -> Self {
-        let tool_header = world.resource::<ToolMenu>().get();
-        let toggle_panel = world
-            .spawn(MenuItem::Text("Simulation".into()))
-            .insert(ChildOf(tool_header))
-            .id();
-
-        SimulationPanel {
-            show: true,
-            toggle_panel,
-        }
-    }
-}
-
-impl SimulationPanel {
-    fn panel(In(input): In<PanelWidgetInput>, world: &mut World) {
-        if *world.resource::<State<AppState>>().get() == AppState::MainMenu {
-            return;
-        }
-        if !world.resource::<SimulationPanel>().show {
-            return;
-        }
-
-        show_panel_of_tiles(In(input), world);
-    }
-
-    fn handle_visibility(
-        mut menu_events: EventReader<MenuEvent>,
-        mut display: ResMut<SimulationPanel>,
-    ) {
-        for event in menu_events.read() {
-            if event.clicked() && event.source() == display.toggle_panel {
-                display.show = !display.show;
-            }
-        }
+fn show_task_panel(task_widget: Option<ResMut<TaskWidget>>) {
+    if let Some(mut task_widget) = task_widget {
+        task_widget.show = true;
     }
 }
 
 /// A title bar for the simulation panel.
 #[derive(SystemParam)]
-struct SimulationPanelHeader<'w> {
-    display: ResMut<'w, SimulationPanel>,
-}
+struct SimulationPanelHeader;
 
-impl<'w> WidgetSystem<Tile> for SimulationPanelHeader<'w> {
-    fn show(_: Tile, ui: &mut Ui, state: &mut SystemState<Self>, world: &mut World) {
-        let mut params = state.get_mut(world);
-
-        ui.horizontal(|ui| {
-            ui.heading("Discrete Event Simulation");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("❌").clicked() {
-                    params.display.show = false;
-                }
-            });
-        });
+impl WidgetSystem<Tile> for SimulationPanelHeader {
+    fn show(_: Tile, ui: &mut Ui, _: &mut SystemState<Self>, _: &mut World) {
+        ui.separator();
+        ui.heading("Discrete Event Simulation");
         ui.separator();
     }
 }
@@ -128,7 +63,7 @@ struct SimulationComputeTile<'w, 's> {
     current_scenario: Res<'w, CurrentScenario>,
     current_level: Res<'w, CurrentLevel>,
     get_inclusion_modifier: GetModifier<'w, 's, Modifier<Inclusion>>,
-    tasks: Query<'w, 's, (Entity, &'static Task)>,
+    tasks: Query<'w, 's, (Entity, &'static Task<Entity>)>,
     grids: Query<'w, 's, (Entity, &'static Grid, &'static ChildOf)>,
     visibilities: Query<'w, 's, &'static mut Visibility>,
     occupancy: OccupancyExporter<'w, 's>,
