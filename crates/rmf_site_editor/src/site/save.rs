@@ -147,7 +147,7 @@ fn assign_site_ids(world: &mut World, site: Entity) -> Result<(), SiteGeneration
         Query<Entity, (With<ModelMarker>, With<Group>)>,
         Query<Entity, (With<ModelMarker>, Without<Group>, Without<Preview>)>,
         Query<(Entity, &Affiliation<Entity>), With<ScenarioModifiers<Entity>>>,
-        Query<Entity, (With<Task>, Without<Pending>)>,
+        Query<Entity, (With<Task<Entity>>, Without<Pending>)>,
         Query<
             Entity,
             (
@@ -398,6 +398,8 @@ fn generate_levels(
                 Option<&Original<Edge<Entity>>>,
                 &NameInSite,
                 &DoorType,
+                &Bottom,
+                &Top,
                 &SiteID,
             ),
             Without<Pending>,
@@ -450,6 +452,8 @@ fn generate_levels(
                 Option<&Original<Edge<Entity>>>,
                 &Affiliation<Entity>,
                 &SiteID,
+                &Top,
+                &Bottom,
             ),
             (With<WallMarker>, Without<Pending>),
         >,
@@ -551,7 +555,7 @@ fn generate_levels(
                     if let Ok((anchor, id)) = q_anchors.get(c) {
                         level.anchors.insert(id.0, anchor.clone());
                     }
-                    if let Ok((edge, o_edge, name, kind, id)) = q_doors.get(c) {
+                    if let Ok((edge, o_edge, name, kind, bottom, top, id)) = q_doors.get(c) {
                         let edge = o_edge.map(|x| &x.0).unwrap_or(edge);
                         let anchors = get_anchor_id_edge(c, edge)?;
                         level.doors.insert(
@@ -560,6 +564,8 @@ fn generate_levels(
                                 anchors,
                                 name: name.clone(),
                                 kind: kind.clone(),
+                                bottom: *bottom,
+                                top: *top,
                                 marker: DoorMarker,
                             },
                         );
@@ -666,7 +672,7 @@ fn generate_levels(
                             },
                         );
                     }
-                    if let Ok((edge, o_edge, texture, id)) = q_walls.get(c) {
+                    if let Ok((edge, o_edge, texture, id, height, bottom)) = q_walls.get(c) {
                         let edge = o_edge.map(|x| &x.0).unwrap_or(edge);
                         let anchors = get_anchor_id_edge(c, edge)?;
                         let texture = if let Affiliation(Some(e)) = texture {
@@ -680,6 +686,8 @@ fn generate_levels(
                             Wall {
                                 anchors,
                                 texture,
+                                top: *height,
+                                bottom: *bottom,
                                 marker: WallMarker,
                             },
                         );
@@ -1656,15 +1664,37 @@ fn generate_scenarios(
 fn generate_tasks(
     site: Entity,
     world: &mut World,
-) -> Result<BTreeMap<u32, Task>, SiteGenerationError> {
-    let mut state: SystemState<(Query<(&SiteID, &Task), Without<Pending>>, Query<&Children>)> =
-        SystemState::new(world);
-    let (tasks, children) = state.get(world);
-    let mut res = BTreeMap::<u32, Task>::new();
+) -> Result<BTreeMap<u32, Task<u32>>, SiteGenerationError> {
+    let mut state: SystemState<(
+        Query<(Entity, &SiteID, &Task<Entity>), Without<Pending>>,
+        Query<&SiteID, (With<Robot>, Without<Pending>)>,
+        Query<&Children>,
+    )> = SystemState::new(world);
+    let (tasks, robots, children) = state.get(world);
+    let mut res = BTreeMap::<u32, Task<u32>>::new();
     if let Ok(children) = children.get(site) {
         for child in children.iter() {
-            if let Ok((site_id, task)) = tasks.get(child) {
-                res.insert(site_id.0, task.clone());
+            if let Ok((task_entity, site_id, task)) = tasks.get(child) {
+                let task = match task {
+                    Task::Dispatch(request) => Task::Dispatch(request.clone()),
+                    Task::Direct(request) => {
+                        let robot_entity = match request.robot.0 {
+                            Some(e) => e,
+                            None => return Err(SiteGenerationError::EmptyAffiliation(task_entity)),
+                        };
+                        Task::Direct(RobotTaskRequest::new(
+                            match robots.get(robot_entity) {
+                                Ok(id) => Affiliation(Some(id.0)),
+                                Err(_) => {
+                                    return Err(SiteGenerationError::MissingSiteID(robot_entity))
+                                }
+                            },
+                            request.fleet.clone(),
+                            request.request.clone(),
+                        ))
+                    }
+                };
+                res.insert(site_id.0, task);
             }
         }
     }

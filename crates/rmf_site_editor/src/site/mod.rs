@@ -270,6 +270,12 @@ impl Plugin for SitePlugin {
             ChangePlugin::<Texture>::default(),
         ))
         .add_plugins((
+            ChangePlugin::<Bottom>::default(),
+            RecallPlugin::<RecallBottom>::default(),
+            ChangePlugin::<Top>::default(),
+            RecallPlugin::<RecallTop>::default(),
+        ))
+        .add_plugins((
             ChangePlugin::<DoorType>::default(),
             RecallPlugin::<RecallDoorType>::default(),
             ChangePlugin::<LevelElevation>::default(),
@@ -308,11 +314,11 @@ impl Plugin for SitePlugin {
             ChangePlugin::<ModelProperty<Scale>>::default(),
             ChangePlugin::<ModelProperty<IsStatic>>::default(),
             ChangePlugin::<ModelProperty<Robot>>::default(),
-            ChangePlugin::<Task>::default(),
+            ChangePlugin::<Task<Entity>>::default(),
             PropertyPlugin::<Pose, InstanceMarker>::default(),
             PropertyPlugin::<Inclusion, InstanceMarker>::default(),
-            PropertyPlugin::<Inclusion, Task>::default(),
-            PropertyPlugin::<TaskParams, Task>::default(),
+            PropertyPlugin::<Inclusion, Task<Entity>>::default(),
+            PropertyPlugin::<TaskParams, Task<Entity>>::default(),
             PropertyPlugin::<OnLevel<Entity>, Robot>::default(),
             SlotcarSdfPlugin,
             MaterialPlugin::<ExtendedMaterial<StandardMaterial, LaneArrowMaterial>>::default(),
@@ -403,7 +409,6 @@ impl Plugin for SitePlugin {
             PostUpdate,
             (
                 add_wall_visual,
-                update_walls_for_moved_anchors,
                 update_walls,
                 update_transforms_for_changed_poses,
                 align_site_drawings,
@@ -419,7 +424,7 @@ impl Plugin for SitePlugin {
                 update_anchor_transforms,
                 add_door_visuals,
                 update_changed_door,
-                update_door_for_moved_anchors,
+                update_door_for_changed_dependency,
                 add_floor_visuals,
                 update_floors,
                 update_floors_for_moved_anchors,
@@ -486,6 +491,7 @@ impl Plugin for SitePlugin {
                 check_for_missing_root_modifiers::<InstanceMarker>,
                 update_default_scenario,
                 update_lane_motion_visuals,
+                update_direct_task_fleet,
             )
                 .run_if(AppState::in_displaying_mode())
                 .in_set(SiteUpdateSet::BetweenTransformAndVisibility),
