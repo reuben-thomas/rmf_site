@@ -273,7 +273,10 @@ pub fn robot(
                     "[robot] Predicted {} to wait for a door at {now:?}",
                     name_of(assignment.robot, &names)
                 );
-                predictions.predict_instantaneous_insert(assignment.robot, trajectory.hold(trajectory_time));
+                predictions.predict_instantaneous_insert(
+                    assignment.robot,
+                    trajectory.hold(trajectory_time),
+                );
             }
             (true, false) => {
                 info!(

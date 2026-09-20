@@ -195,10 +195,7 @@ impl PredictionWriter<'_, '_> {
     }
 
     /// Predict an instantaneous insertion of a resource into the world.
-    pub fn predict_instantaneous_resource_insert<R: Resource + Clone + Debug>(
-        &mut self,
-        value: R,
-    ) {
+    pub fn predict_instantaneous_resource_insert<R: Resource + Clone + Debug>(&mut self, value: R) {
         self.predict_resource_insert(self.clock.now(), value);
     }
 }
