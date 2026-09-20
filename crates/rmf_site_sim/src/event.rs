@@ -132,65 +132,61 @@ impl SystemBuffer for CandidateDiscreteEvents {
 /// [`CandidateResourceEventWriter`] if you do not wish to implement a
 /// [`DiscreteEvent`] struct.
 #[derive(SystemParam)]
-pub struct CandidateEventWriter<'w, 's> {
+pub struct PredictionWriter<'w, 's> {
     buffer: Deferred<'s, CandidateDiscreteEvents>,
     clock: Res<'w, SimulationClock>,
 }
 
-impl CandidateEventWriter<'_, '_> {
+impl PredictionWriter<'_, '_> {
+    /// Predict that a custom event type will occur in the future.
     pub fn predict(&mut self, time: SimulationTime, event: impl DiscreteEvent) {
         self.buffer.submit(self.clock.now(), time, Box::new(event));
     }
 
-    pub fn predict_now(&mut self, event: impl DiscreteEvent) {
+    /// Predict that an instantaneous event will take place. An instantaneous
+    /// event does not advance the simulation clock. This is most often used
+    /// when a custom prediction system is being used to extend or modify the
+    /// behavior of a base (upstream) prediction system.
+    pub fn predict_instantaneous(&mut self, event: impl DiscreteEvent) {
         self.predict(self.clock.now(), event);
     }
-}
 
-/// Predicts a component write as a discrete event.
-#[derive(SystemParam)]
-pub struct CandidateComponentEventWriter<'w, 's, T: Component + Clone + Debug> {
-    buffer: Deferred<'s, CandidateDiscreteEvents>,
-    clock: Res<'w, SimulationClock>,
-    _marker: PhantomData<T>,
-}
-
-impl<T: Component + Clone + Debug> CandidateComponentEventWriter<'_, '_, T> {
-    pub fn predict(&mut self, time: SimulationTime, entity: Entity, value: T) {
+    /// Predict an insertion of components into an entity. Pass in a component
+    /// or bundle to insert into an entity if this prediction is selected.
+    ///
+    /// Inserted component values will replace any component values of the same
+    /// type that the entity already had.
+    pub fn predict_insert<T: Bundle + Clone + Debug>(
+        &mut self,
+        time: SimulationTime,
+        entity: Entity,
+        value: T,
+    ) {
         self.buffer.submit(
             self.clock.now(),
             time,
-            Box::new(CandidateComponentWrite { entity, value }),
+            Box::new(CandidateBundleWrite { entity, value }),
         );
     }
 
-    pub fn predict_now(&mut self, entity: Entity, value: T) {
-        self.predict(self.clock.now(), entity, value);
+    /// Predict an instantaneous insertion of components into an entity.
+    pub fn predict_instantaneous_insert<T: Bundle + Clone + Debug>(
+        &mut self,
+        entity: Entity,
+        value: T,
+    ) {
+        self.predict_insert(self.clock.now(), entity, value);
     }
-}
 
-#[derive(Clone, Debug)]
-struct CandidateComponentWrite<T: Component + Clone + Debug> {
-    entity: Entity,
-    value: T,
-}
-
-impl<T: Component + Clone + Debug> Command for CandidateComponentWrite<T> {
-    fn apply(self, world: &mut World) {
-        world.entity_mut(self.entity).insert(self.value);
-    }
-}
-
-/// Predicts a resource write as a discrete event.
-#[derive(SystemParam)]
-pub struct CandidateResourceEventWriter<'w, 's, R: Resource + Clone + Debug> {
-    buffer: Deferred<'s, CandidateDiscreteEvents>,
-    clock: Res<'w, SimulationClock>,
-    _marker: PhantomData<R>,
-}
-
-impl<R: Resource + Clone + Debug> CandidateResourceEventWriter<'_, '_, R> {
-    pub fn predict(&mut self, time: SimulationTime, value: R) {
+    /// Predict a resource being inserted into the world.
+    ///
+    /// Inserted resource values will replace any resource of the same type that
+    /// the world already had.
+    pub fn predict_resource_insert<R: Resource + Clone + Debug>(
+        &mut self,
+        time: SimulationTime,
+        value: R,
+    ) {
         self.buffer.submit(
             self.clock.now(),
             time,
@@ -198,8 +194,24 @@ impl<R: Resource + Clone + Debug> CandidateResourceEventWriter<'_, '_, R> {
         );
     }
 
-    pub fn predict_now(&mut self, value: R) {
-        self.predict(self.clock.now(), value);
+    /// Predict an instantaneous insertion of a resource into the world.
+    pub fn predict_instantaneous_resource_insert<R: Resource + Clone + Debug>(
+        &mut self,
+        value: R,
+    ) {
+        self.predict_resource_insert(self.clock.now(), value);
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CandidateBundleWrite<T: Bundle + Clone + Debug> {
+    entity: Entity,
+    value: T,
+}
+
+impl<T: Bundle + Clone + Debug> Command for CandidateBundleWrite<T> {
+    fn apply(self, world: &mut World) {
+        world.entity_mut(self.entity).insert(self.value);
     }
 }
 

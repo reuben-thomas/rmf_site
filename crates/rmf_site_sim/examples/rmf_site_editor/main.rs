@@ -82,7 +82,7 @@ use rmf_site_editor::site::{
     DoorType, Edge, GoToPlace, LevelHeightParam, LocationTags, NameInSite, Point, Pose, Robot,
     Rotation, SiteAssets, Task, TaskParams, Top, find_door_position_tfs, line_stroke_transform,
 };
-use rmf_site_sim::event::{CandidateComponentEventWriter, CandidateEventWriter};
+use rmf_site_sim::event::PredictionWriter;
 use rmf_site_sim::playback::SimulationPlaybackPlugin;
 use rmf_site_sim::time::SimulationClock;
 use rmf_site_sim::time::SimulationTime;

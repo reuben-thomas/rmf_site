@@ -35,7 +35,7 @@ use bevy::color::palettes::basic;
 use bevy::ecs::entity::EntityHashSet;
 use bevy::prelude::*;
 use rand::Rng;
-use rmf_site_sim::event::{CandidateComponentEventWriter, CandidateEventWriter};
+use rmf_site_sim::event::PredictionWriter;
 use rmf_site_sim::interaction::keyboard::SimulationPlaybackKeyboardPlugin;
 use rmf_site_sim::playback::{
     SimulationPlaybackCommand, SimulationPlaybackPlugin, SimulationReplayBehaviour,
@@ -229,7 +229,7 @@ fn request_generator(
     robots: Query<(Entity, &Name), With<Robot>>,
     waypoints: Query<(Entity, &Name), With<Waypoint>>,
     active_request_entities: Res<ActiveRequestEntities>,
-    mut changes: CandidateEventWriter,
+    mut changes: PredictionWriter,
 ) {
     let idle_waypoints = waypoints
         .iter()
@@ -258,13 +258,13 @@ fn planner(
     robots: Query<(Entity, &Pose, &Name, &Request), (With<Robot>, Without<Trajectory>)>,
     goals: Query<&Pose, With<Waypoint>>,
     clock: Res<SimulationClock>,
-    mut trajectories: CandidateComponentEventWriter<Trajectory>,
+    mut predictions: PredictionWriter,
 ) {
     let time_now = clock.now();
     for (robot, start_pose, robot_name, request) in robots.iter() {
         let target_pose = goals.get(request.goal).unwrap();
         let trajectory = plan_trajectory(start_pose, target_pose, time_now);
-        trajectories.predict_now(robot, trajectory);
+        predictions.predict_instantaneous_insert(robot, trajectory);
         info!(
             "[planner] Planned trajectory for {} at {:?}",
             robot_name, time_now
@@ -313,8 +313,7 @@ fn plan_trajectory(
 fn robot(
     robots: Query<(Entity, &Request, &Trajectory, &Name), With<Robot>>,
     target_waypoints: Query<&Waypoint>,
-    mut waypoints: CandidateComponentEventWriter<Waypoint>,
-    mut changes: CandidateEventWriter,
+    mut predictions: PredictionWriter,
     clock: Res<SimulationClock>,
 ) {
     let now = clock.now();
@@ -327,14 +326,14 @@ fn robot(
 
         match *target_waypoints.get(request.goal).unwrap() {
             Waypoint::Unvisited => {
-                waypoints.predict(end.time, request.goal, Waypoint::Visited);
+                predictions.predict_insert(end.time, request.goal, Waypoint::Visited);
                 info!(
                     "[robot] Scheduled waypoint visit for {} at {:?}",
                     robot_name, end.time
                 );
             }
             _ => {
-                changes.predict(
+                predictions.predict(
                     end.time,
                     CompleteRequest {
                         robot,

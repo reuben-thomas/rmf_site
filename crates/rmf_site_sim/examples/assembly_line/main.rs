@@ -1,5 +1,5 @@
 //! In this example, we simulate an assembly line consisting of autonomous
-//! mobile robots (AMRs), conveyors, and processing stations. These entities
+//! mobile robots (AMRs), conveyors, and processing stations.
 //!
 //!
 //! ```text

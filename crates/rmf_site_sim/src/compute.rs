@@ -212,7 +212,7 @@ impl SimulationComputeTimer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::CandidateEventWriter;
+    use crate::event::PredictionWriter;
     use crate::time::SimulationTime;
     use bevy::ecs::system::Command;
     use std::time::Duration;
@@ -233,7 +233,7 @@ mod tests {
     }
 
     /// Predicts an [`IncrementCount`] once every second in the future until [`EXPECTED_FINAL_COUNT`] is reached.
-    fn increment(clock: Res<SimulationClock>, count: Res<Count>, mut writer: CandidateEventWriter) {
+    fn increment(clock: Res<SimulationClock>, count: Res<Count>, mut writer: PredictionWriter) {
         if count.0 < EXPECTED_FINAL_COUNT {
             writer.predict(clock.now() + Duration::from_secs(1), IncrementCount);
         }

@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use rand::Rng;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
-use rmf_site_sim::event::{CandidateComponentEventWriter, CandidateEventWriter};
+use rmf_site_sim::event::PredictionWriter;
 use rmf_site_sim::time::{SimulationClock, SimulationTime};
 use rmf_site_sim::{Simulation, SimulationBuilder, SimulationComputeState, SimulationPlugin};
 use std::time::Duration;
@@ -66,11 +66,11 @@ impl Command for CompleteClientReuest {
 /// Predicts each client request joining the queue when it arrives.
 fn client_request(
     requests: Query<(Entity, &ClientRequest, &ClientRequestState)>,
-    mut states: CandidateComponentEventWriter<ClientRequestState>,
+    mut predictions: PredictionWriter,
 ) {
     for (entity, request, state) in &requests {
         if *state == ClientRequestState::Pending {
-            states.predict(request.arrival, entity, ClientRequestState::Queued);
+            predictions.predict_insert(request.arrival, entity, ClientRequestState::Queued);
         }
     }
 }
@@ -81,8 +81,7 @@ fn server(
     servers: Query<(Entity, &ServerState)>,
     requests: Query<(Entity, &ClientRequestState)>,
     clock: Res<SimulationClock>,
-    mut serving: CandidateComponentEventWriter<ServerState>,
-    mut events: CandidateEventWriter,
+    mut predictions: PredictionWriter,
 ) {
     for (entity, server) in &servers {
         match server {
@@ -92,7 +91,7 @@ fn server(
                     .find(|(_, state)| **state == ClientRequestState::Queued);
                 if let Some((request, _)) = queued {
                     let until = clock.now() + SERVER_RESPONSE_TIME;
-                    serving.predict_now(
+                    predictions.predict_instantaneous_insert(
                         entity,
                         ServerState::Serving {
                             active_request: request,
@@ -104,7 +103,7 @@ fn server(
             ServerState::Serving {
                 active_request: request,
                 until,
-            } => events.predict(
+            } => predictions.predict(
                 *until,
                 CompleteClientReuest {
                     server: entity,

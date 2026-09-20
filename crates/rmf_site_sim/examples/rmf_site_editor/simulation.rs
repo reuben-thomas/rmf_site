@@ -198,7 +198,7 @@ pub fn request_generator(
         Option<&TaskParams>,
     )>,
     names: Query<&NameInSite>,
-    mut states: CandidateComponentEventWriter<TaskState>,
+    mut predictions: PredictionWriter,
 ) {
     for (task, state, assignment, params) in tasks.iter() {
         if *state != TaskState::Pending {
@@ -214,7 +214,7 @@ pub fn request_generator(
             "[request_generator] Predicted the request for {} at {time:?}",
             name_of(assignment.robot, &names)
         );
-        states.predict(time, task, TaskState::Active);
+        predictions.predict_insert(time, task, TaskState::Active);
     }
 }
 
@@ -227,10 +227,7 @@ pub fn robot(
     names: Query<&NameInSite>,
     occupancy: Res<Occupancy>,
     clock: Res<SimulationClock>,
-    mut states: CandidateComponentEventWriter<TaskState>,
-    mut poses: CandidateComponentEventWriter<Pose>,
-    mut paths: CandidateComponentEventWriter<RobotTrajectory>,
-    mut commands: CandidateComponentEventWriter<DoorCommand>,
+    mut predictions: PredictionWriter,
 ) {
     let now = clock.now();
     let mut doors_to_open = HashSet::new();
@@ -254,7 +251,7 @@ pub fn robot(
                 "[robot] Predicted {} to move into position at {now:?}",
                 name_of(assignment.robot, &names)
             );
-            poses.predict_now(assignment.robot, expected);
+            predictions.predict_instantaneous_insert(assignment.robot, expected);
         }
 
         let door_intersections =
@@ -276,14 +273,14 @@ pub fn robot(
                     "[robot] Predicted {} to wait for a door at {now:?}",
                     name_of(assignment.robot, &names)
                 );
-                paths.predict_now(assignment.robot, trajectory.hold(trajectory_time));
+                predictions.predict_instantaneous_insert(assignment.robot, trajectory.hold(trajectory_time));
             }
             (true, false) => {
                 info!(
                     "[robot] Predicted {} to resume at {now:?}",
                     name_of(assignment.robot, &names)
                 );
-                paths.predict_now(assignment.robot, trajectory.resume(now));
+                predictions.predict_instantaneous_insert(assignment.robot, trajectory.resume(now));
             }
             (false, false) => {
                 let arrival = crate::mapf::finish_time(&trajectory.waypoints);
@@ -303,19 +300,19 @@ pub fn robot(
                         "[robot] Predicted {} to move into position at {next_pose_update:?}",
                         name_of(assignment.robot, &names)
                     );
-                    poses.predict(next_pose_update, assignment.robot, moved);
+                    predictions.predict_insert(next_pose_update, assignment.robot, moved);
                 }
                 info!(
                     "[robot] Predicted {} to complete its task at {arrival:?}",
                     name_of(assignment.robot, &names)
                 );
-                states.predict(arrival, task, TaskState::Complete);
+                predictions.predict_insert(arrival, task, TaskState::Complete);
             }
             _ => {}
         }
     }
 
-    command_doors(&doors, &doors_to_open, now, &names, &mut commands);
+    command_doors(&doors, &doors_to_open, now, &names, &mut predictions);
 }
 
 /// The interval over which a robot's trajectory comes within
@@ -363,7 +360,7 @@ fn command_doors(
     open: &HashSet<Entity>,
     now: SimulationTime,
     names: &Query<&NameInSite>,
-    commands: &mut CandidateComponentEventWriter<DoorCommand>,
+    predictions: &mut PredictionWriter,
 ) {
     for (door, _, commanded, _) in doors.iter() {
         let command = if open.contains(&door) {
@@ -376,7 +373,7 @@ fn command_doors(
                 "[robot] Predicted {} to be commanded to {command:?} at {now:?}",
                 name_of(door, names)
             );
-            commands.predict_now(door, command);
+            predictions.predict_instantaneous_insert(door, command);
         }
     }
 }
@@ -386,7 +383,7 @@ pub fn door(
     doors: Query<(Entity, &DoorState, &DoorCommand)>,
     names: Query<&NameInSite>,
     clock: Res<SimulationClock>,
-    mut states: CandidateComponentEventWriter<DoorState>,
+    mut predictions: PredictionWriter,
 ) {
     let now = clock.now();
 
@@ -408,7 +405,7 @@ pub fn door(
             "[door] Predicted {} to be {next:?} at {time:?}",
             name_of(door, &names)
         );
-        states.predict(time, door, next);
+        predictions.predict_insert(time, door, next);
     }
 }
 
@@ -420,7 +417,7 @@ pub fn planner(
     names: Query<&NameInSite>,
     occupancy: Res<Occupancy>,
     clock: Res<SimulationClock>,
-    mut changes: CandidateEventWriter,
+    mut changes: PredictionWriter,
 ) {
     let mut agents = HashMap::new();
     let mut assigned_tasks = HashMap::new();
@@ -468,7 +465,7 @@ pub fn planner(
         .collect();
 
     info!("[planner] Predicted {trajectory_count} negotiated trajectories at {now:?}");
-    changes.predict_now(AssignRobotTrajectory { trajectories });
+    changes.predict_instantaneous(AssignRobotTrajectory { trajectories });
 }
 
 /// A helper [`SystemParam`] for setting up the simulation.

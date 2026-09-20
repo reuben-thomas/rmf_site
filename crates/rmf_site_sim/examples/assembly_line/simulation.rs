@@ -9,7 +9,7 @@ use rand::distributions::Distribution;
 use rand::rngs::StdRng;
 use rand_distr::Normal;
 use rmf_site_sim::compute::SimulationComputeSettings;
-use rmf_site_sim::event::CandidateEventWriter;
+use rmf_site_sim::event::PredictionWriter;
 use rmf_site_sim::{Simulation, SimulationBuilder};
 
 const RANDOMNESS_SEED: u64 = 12345;
@@ -215,7 +215,7 @@ pub fn setup(world: &mut World) {
                 source,
             ))
             .id();
-        // TODO
+
         spawn_label(
             world,
             product,
@@ -394,7 +394,7 @@ fn build_simulation(world: &World) -> Simulation {
 #[derive(Resource)]
 struct SimulationRng(StdRng);
 
-fn motion(moving: Query<(Entity, &Motion)>, mut events: CandidateEventWriter) {
+fn motion(moving: Query<(Entity, &Motion)>, mut events: PredictionWriter) {
     for (entity, motion) in &moving {
         events.predict(
             motion.arrival,
@@ -417,7 +417,7 @@ fn processor(
     products: ProductQuery,
     mut rng: ResMut<SimulationRng>,
     clock: Res<SimulationClock>,
-    mut events: CandidateEventWriter,
+    mut events: PredictionWriter,
 ) {
     let now = clock.now();
 
@@ -447,7 +447,7 @@ fn processor(
             let duration = receiver.params.sample(&mut rng.0);
             motion_to(*position, *receiver_position, duration, now)
         });
-        events.predict_now(PassProduct {
+        events.predict_instantaneous(PassProduct {
             product,
             to: next,
             motion: work,
@@ -466,7 +466,7 @@ fn autonomous_mobile_robot(
     products: ProductQuery,
     mut rng: ResMut<SimulationRng>,
     clock: Res<SimulationClock>,
-    mut events: CandidateEventWriter,
+    mut events: PredictionWriter,
 ) {
     let now = clock.now();
 
@@ -496,7 +496,7 @@ fn autonomous_mobile_robot(
 
         let duration = processor.params.sample(&mut rng.0);
         let motion = motion_to(*position, *target, duration, now);
-        events.predict_now(MoveTo { entity, motion });
+        events.predict_instantaneous(MoveTo { entity, motion });
         info!(
             "[autonomous_mobile_robot] {} is driving, arriving at {:?}",
             name, motion.arrival
